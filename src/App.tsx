@@ -1,24 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ReaMcpPanel from './ReaMcpPanel'
-import { requestAiReply, type AiProvider, type ChatMessage } from './ai'
+import AgentChat from './AgentChat'
+import { type AiProvider } from './ai'
+import { supabase } from './supabase'
+import { useAuth } from './AuthGate'
 import {
   Activity, ArrowDownLeft, ArrowUpLeft, Bell, Binary, Box, Check,
   ChevronDown, ChevronLeft, CircleHelp, Clock3, Code2, Command,
   Cpu, Database, FileArchive, FileCode2, FileSearch, FileUp, Folder,
   FolderOpen, GitBranch, HardDrive, LayoutDashboard, ListFilter,
   LockKeyhole, Menu, MoreHorizontal, Plus, Search, Settings2,
-  ShieldCheck, Sparkles, Bot, Send, UploadCloud, WandSparkles, X,
+  ShieldCheck, Sparkles, Bot, UploadCloud, WandSparkles, X,
   Zap, type LucideIcon
 } from 'lucide-react'
 
 type Page = 'overview' | 'projects' | 'analysis' | 'rebuild' | 'files' | 'activity' | 'settings' | 'assistant'
-type Project = { id: number; name: string; kind: string; updated: string; status: 'جاهز' | 'قيد التحليل' | 'مسودة'; files: number }
-
-const initialProjects: Project[] = [
-  { id: 1, name: 'تطبيق المتجر الذكي', kind: 'Android · APK', updated: 'منذ 12 دقيقة', status: 'جاهز', files: 18 },
-  { id: 2, name: 'لوحة تحكم الويب', kind: 'Web · ZIP', updated: 'أمس، 21:40', status: 'قيد التحليل', files: 42 },
-  { id: 3, name: 'مكتبة النظام', kind: 'Binary · SO', updated: 'منذ يومين', status: 'مسودة', files: 7 },
-]
+type Project = { id: string | number; name: string; kind: string; updated: string; status: 'جاهز' | 'قيد التحليل' | 'مسودة' | 'تم الرفع'; files: number }
 
 const navGroups: { label: string; items: { id: Page; label: string; icon: LucideIcon }[] }[] = [
   { label: 'مساحة العمل', items: [
@@ -47,64 +44,143 @@ const pageTitles: Record<Page, { title: string; subtitle: string }> = {
 }
 
 function App() {
+  const { user, signOut } = useAuth()
   const [page, setPage] = useState<Page>('overview')
-  const [projects, setProjects] = useState<Project[]>(() => {
-    try {
-      const saved = localStorage.getItem('rea-ai-projects')
-      return saved ? JSON.parse(saved) as Project[] : initialProjects
-    } catch {
-      return initialProjects
-    }
-  })
+  const [projects, setProjects] = useState<Project[]>([])
   const [query, setQuery] = useState('')
   const [modal, setModal] = useState(false)
   const [projectName, setProjectName] = useState('')
+  const [analysisName, setAnalysisName] = useState('')
+  const [isUploading, setIsUploading] = useState(false)
+  const [analysisRun, setAnalysisRun] = useState<{ projectId: string; filename: string; sourceUrl: string } | null>(null)
   const [mobileNav, setMobileNav] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [notice, setNotice] = useState('')
-  const [aiProvider, setAiProvider] = useState<AiProvider>('gemini')
+  const [aiProvider, setAiProvider] = useState<AiProvider>(() => {
+    const saved = localStorage.getItem('rea-ai-provider')
+    return saved === 'groq' || saved === 'openrouter' ? saved : 'gemini'
+  })
   const [aiKey, setAiKey] = useState('')
-  const [aiModel, setAiModel] = useState('gemini-3.8-flash')
-  const [aiMessages, setAiMessages] = useState<ChatMessage[]>([])
-  const [aiPrompt, setAiPrompt] = useState('')
-  const [aiSending, setAiSending] = useState(false)
+  const [aiModel, setAiModel] = useState(() => localStorage.getItem('rea-ai-model') || 'gemini-3.8-flash')
   const fileInput = useRef<HTMLInputElement>(null)
   const current = pageTitles[page]
   const filtered = useMemo(() => projects.filter(p => p.name.toLowerCase().includes(query.toLowerCase())), [projects, query])
 
   useEffect(() => {
-    localStorage.setItem('rea-ai-projects', JSON.stringify(projects))
-  }, [projects])
+    let active = true
+    async function loadProjects() {
+      if (!supabase) return
+      const { data, error } = await supabase
+        .from('projects')
+        .select('id,name,original_filename,status,updated_at')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+      if (!active) return
+      if (error) {
+        setNotice(`تعذر تحميل المشاريع من Supabase: ${error.message}`)
+        return
+      }
+      setProjects((data ?? []).map(row => {
+        const hasFile = Boolean(row.original_filename)
+        const extension = row.original_filename?.split('.').pop()?.toUpperCase() || ''
+        const status: Project['status'] = row.status === 'completed' ? 'جاهز'
+          : ['queued', 'running', 'analyzing'].includes(row.status) ? 'قيد التحليل'
+          : hasFile && row.status === 'uploaded' ? 'تم الرفع' : 'مسودة'
+        return {
+          id: row.id,
+          name: row.name,
+          kind: extension ? `ملف · ${extension}` : 'مشروع جديد',
+          updated: 'محفوظ في السحابة',
+          status,
+          files: hasFile ? 1 : 0,
+        }
+      }))
+    }
+    void loadProjects()
+    return () => { active = false }
+  }, [user.id])
 
-  async function sendAiMessage() {
-    const prompt = aiPrompt.trim()
-    if (!prompt || aiSending) return
-    if (!aiKey.trim()) {
-      setNotice('أدخل مفتاح API من صفحة الإعدادات أولاً.')
-      setPage('settings')
+  useEffect(() => {
+    localStorage.setItem('rea-ai-provider', aiProvider)
+    localStorage.setItem('rea-ai-model', aiModel)
+  }, [aiProvider, aiModel])
+
+  async function addProject() {
+    if (!projectName.trim() || !supabase) return
+    const { data, error } = await supabase.from('projects').insert({
+      user_id: user.id,
+      name: projectName.trim(),
+      status: 'uploaded',
+    }).select('id,name,original_filename,status,updated_at').single()
+    if (error) {
+      setNotice(`تعذر حفظ المشروع: ${error.message}`)
       return
     }
-    const nextMessages: ChatMessage[] = [...aiMessages, { role: 'user', content: prompt }]
-    setAiMessages(nextMessages)
-    setAiPrompt('')
-    setAiSending(true)
-    try {
-      const reply = await requestAiReply({ provider: aiProvider, apiKey: aiKey, model: aiModel, messages: nextMessages })
-      setAiMessages(prev => [...prev, { role: 'assistant', content: reply }])
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'تعذر الاتصال بمزوّد الذكاء الاصطناعي.'
-      setAiMessages(prev => [...prev, { role: 'assistant', content: `تعذر إكمال الطلب: ${message}` }])
-    } finally {
-      setAiSending(false)
-    }
-  }
-
-  function addProject() {
-    if (!projectName.trim()) return
-    setProjects(prev => [{ id: Date.now(), name: projectName.trim(), kind: 'مشروع جديد', updated: 'الآن', status: 'مسودة', files: 0 }, ...prev])
+    setProjects(prev => [{ id: data.id, name: data.name, kind: 'مشروع جديد', updated: 'الآن', status: 'مسودة', files: 0 }, ...prev])
     setProjectName('')
     setModal(false)
     setPage('projects')
+  }
+
+  async function uploadSelectedFiles() {
+    if (!supabase || files.length === 0 || isUploading) {
+      if (files.length === 0) setNotice('اختر ملف APK أو ZIP أو ملفاً مدعوماً أولاً.')
+      return
+    }
+    setIsUploading(true)
+    let uploadedCount = 0
+    try {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index]
+        if (file.size > 100 * 1024 * 1024) throw new Error(`${file.name}: يتجاوز الحد الأقصى 100MB.`)
+        const baseName = analysisName.trim() || file.name.replace(/\.[^.]+$/, '')
+        const projectLabel = files.length > 1 ? `${baseName} ${index + 1}` : baseName
+        const { data: project, error: projectError } = await supabase.from('projects').insert({
+          user_id: user.id,
+          name: projectLabel,
+          original_filename: file.name,
+          status: 'uploaded',
+        }).select('id,name,original_filename,status,updated_at').single()
+        if (projectError) throw projectError
+
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload.bin'
+        const storagePath = `${user.id}/${project.id}/${safeName}`
+        const { error: uploadError } = await supabase.storage.from('apk-temp').upload(storagePath, file, {
+          contentType: file.type || 'application/octet-stream',
+          upsert: false,
+        })
+        if (uploadError) {
+          await supabase.from('projects').update({ status: 'failed' }).eq('id', project.id).eq('user_id', user.id)
+          throw uploadError
+        }
+        const { error: updateError } = await supabase.from('projects').update({ storage_path: storagePath }).eq('id', project.id).eq('user_id', user.id)
+        if (updateError) throw updateError
+        if (file.name.toLowerCase().endsWith('.apk')) {
+          const { data: signed, error: signedError } = await supabase.storage.from('apk-temp').createSignedUrl(storagePath, 3600)
+          if (signedError) throw signedError
+          setAnalysisRun({ projectId: project.id, filename: file.name, sourceUrl: signed.signedUrl })
+        }
+
+        const extension = file.name.split('.').pop()?.toUpperCase() || ''
+        setProjects(prev => [{
+          id: project.id,
+          name: project.name,
+          kind: extension ? `ملف · ${extension}` : 'ملف مرفوع',
+          updated: 'الآن',
+          status: 'تم الرفع',
+          files: 1,
+        }, ...prev])
+        uploadedCount += 1
+      }
+      setFiles([])
+      setAnalysisName('')
+      setNotice(`تم رفع ${uploadedCount} ملفاً. إذا كان بينها APK، يمكنك تشغيل مسار التحليل المجاني عبر GitHub Actions.`)
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'حدث خطأ أثناء رفع الملفات.'
+      setNotice(`توقف الرفع: ${message}`)
+    } finally {
+      setIsUploading(false)
+    }
   }
 
   function addFiles(list: FileList | null) {
@@ -114,7 +190,7 @@ function App() {
     window.setTimeout(() => setNotice(''), 3500)
   }
 
-  const statusClass = (status: Project['status']) => status === 'جاهز' ? 'status-ready' : status === 'قيد التحليل' ? 'status-running' : 'status-draft'
+  const statusClass = (status: Project['status']) => status === 'جاهز' || status === 'تم الرفع' ? 'status-ready' : status === 'قيد التحليل' ? 'status-running' : 'status-draft'
 
   return (
     <div className="app-shell">
@@ -146,8 +222,8 @@ function App() {
             <div className="usage-line"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div>
             <div className="usage-foot"><span>واجهة تجريبية</span><span>v0.1.0</span></div>
           </div>
-          <button className="profile-row" onClick={() => setPage('settings')}>
-            <div className="profile-avatar">YB</div><div className="profile-copy"><strong>Yasser Benmaghnia</strong><span>إعدادات الحساب</span></div><MoreHorizontal size={18} className="muted-icon"/>
+          <button className="profile-row" onClick={() => void signOut()}>
+            <div className="profile-avatar">YB</div><div className="profile-copy"><strong>{user.email || 'حساب REA'}</strong><span>تسجيل الخروج</span></div><MoreHorizontal size={18} className="muted-icon"/>
           </button>
         </div>
       </aside>
@@ -200,7 +276,7 @@ function App() {
 
           {page === 'projects' && <section className="panel page-panel"><div className="panel-heading"><div><h3>كل المشاريع</h3><p>{filtered.length} مشاريع في مساحة العمل</p></div><button className="button-primary small" onClick={() => setModal(true)}><Plus size={15}/> مشروع جديد</button></div><ProjectTable projects={filtered} statusClass={statusClass} onOpen={() => setPage('analysis')}/></section>}
 
-          {page === 'analysis' && <><ReaMcpPanel /><section className="analysis-layout"><div className="panel upload-panel"><div className="panel-heading"><div><h3>مصدر التحليل</h3><p>اختر ملف التطبيق أو اسحبه إلى المساحة أدناه</p></div><div className="panel-icon"><UploadCloud size={18}/></div></div><button className="dropzone" onClick={() => fileInput.current?.click()}><input ref={fileInput} type="file" multiple hidden onChange={e => addFiles(e.target.files)}/><span className="upload-icon"><UploadCloud size={25}/></span><strong>اسحب الملفات وأفلتها هنا</strong><span>أو <u>تصفح الملفات</u> من جهازك</span><small>APK · AAB · ZIP · JAR · DEX · SO · EXE · ملفات المصدر</small></button>{files.length > 0 && <div className="selected-files"><div className="file-list-title">ملفات محددة ({files.length})</div>{files.map((f, i) => <div className="selected-file" key={i}><FileCode2 size={16}/><span>{f.name}</span><small>{(f.size / 1024 / 1024).toFixed(2)} MB</small><Check size={15}/></div>)}</div>}<div className="form-row"><label>اسم التحليل<input placeholder="مثال: تحليل تطبيق المتجر" /></label><label>نوع التحليل<select defaultValue="auto"><option value="auto">تلقائي — اكتشاف نوع الملف</option><option>Android / APK</option><option>Web / JavaScript</option><option>Binary / Native</option><option>.NET Assembly</option></select></label></div><button className="button-primary full" onClick={() => setNotice('واجهة التحليل جاهزة؛ تشغيل محرك REA الفعلي سيُفعّل بعد توصيل خدمة التنفيذ.')}> <Zap size={16}/> تجهيز عملية التحليل</button><p className="form-note"><ShieldCheck size={14}/> لن يتم إرسال الملفات إلى أي خدمة قبل ربط إعدادات التخزين والتنفيذ.</p></div><div className="panel pipeline-panel"><h3>مراحل التحليل</h3><p>مسار العمل المتوقع داخل REA</p><div className="pipeline"><PipelineStep n="01" title="استقبال الملف" desc="فحص النوع والحجم والبصمة" active/><PipelineStep n="02" title="استخراج البنية" desc="تحديد الوحدات والاعتماديات"/><PipelineStep n="03" title="التحليل العميق" desc="استخراج الأدلة والعلاقات"/><PipelineStep n="04" title="تقرير النتائج" desc="ملخص قابل للتصدير"/></div><div className="pipeline-note"><CircleHelp size={15}/> تظهر هنا مراحل العمل؛ ابدأ الاتصال بمحرك REA من اللوحة أعلاه.</div></div></section></>}
+          {page === 'analysis' && <><ReaMcpPanel /><section className="analysis-layout"><div className="panel upload-panel"><div className="panel-heading"><div><h3>مصدر التحليل</h3><p>اختر ملف التطبيق أو اسحبه إلى المساحة أدناه</p></div><div className="panel-icon"><UploadCloud size={18}/></div></div><button className="dropzone" onClick={() => fileInput.current?.click()}><input ref={fileInput} type="file" accept=".apk,.aab,.zip,.jar,.dex,.so,.exe,application/octet-stream" multiple hidden onChange={e => addFiles(e.target.files)}/><span className="upload-icon"><UploadCloud size={25}/></span><strong>اسحب الملفات وأفلتها هنا</strong><span>أو <u>تصفح الملفات</u> من جهازك</span><small>APK · AAB · ZIP · JAR · DEX · SO · EXE · ملفات المصدر</small></button>{files.length > 0 && <div className="selected-files"><div className="file-list-title">ملفات محددة ({files.length})</div>{files.map((f, i) => <div className="selected-file" key={i}><FileCode2 size={16}/><span>{f.name}</span><small>{(f.size / 1024 / 1024).toFixed(2)} MB</small><Check size={15}/></div>)}</div>}<div className="form-row"><label>اسم التحليل<input value={analysisName} onChange={e => setAnalysisName(e.target.value)} placeholder="مثال: تحليل تطبيق المتجر" /></label><label>نوع التحليل<select defaultValue="auto"><option value="auto">تلقائي — اكتشاف نوع الملف</option><option>Android / APK</option><option>Web / JavaScript</option><option>Binary / Native</option><option>.NET Assembly</option></select></label></div><button className="button-primary full" onClick={() => void uploadSelectedFiles()} disabled={isUploading || files.length === 0}> <Zap size={16}/> {isUploading ? 'جارٍ الرفع الآمن…' : 'رفع الملفات إلى مساحة المشروع'}</button>{analysisRun && <div className="panel" style={{ marginTop: 16, borderColor: '#315b91' }}><div className="panel-heading"><div><h3>تشغيل تحليل APK</h3><p>الرابط مؤقت وصالح لمدة ساعة واحدة. لا تشاركه مع أي شخص.</p></div><span className="status-pill status-ready">جاهز للتشغيل</span></div><div className="form-row"><label>معرّف المشروع<input readOnly value={analysisRun.projectId}/></label><label>اسم الملف<input readOnly value={analysisRun.filename}/></label></div><label className="setting-label">رابط تنزيل مؤقت<input readOnly value={analysisRun.sourceUrl}/></label><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}><button className="button-secondary" onClick={() => void navigator.clipboard.writeText(analysisRun.sourceUrl)}>نسخ رابط الملف</button><button className="button-primary" onClick={() => window.open('https://github.com/yasserbenmaghnia812-arch/rea-ai/blob/feature/agent-chat-settings-rebuild/.github/workflows/analyze-apk.yml', '_blank', 'noopener,noreferrer')}>مراجعة مسار التحليل في GitHub</button></div><p className="form-note"><ShieldCheck size={14}/> مسار التحليل جاهز في فرع التطوير. لن يظهر خيار Run workflow حتى يُدمج هذا الفرع في main بموافقتك. النتائج تحفظ كـ Artifact لمدة يوم واحد.</p></div>}<p className="form-note"><ShieldCheck size={14}/> تُحفظ الملفات في bucket خاص، مع صلاحيات وصول تخص حسابك فقط. الحد الأقصى 100MB لكل ملف.</p></div><div className="panel pipeline-panel"><h3>مراحل التحليل</h3><p>مسار العمل المتوقع داخل REA</p><div className="pipeline"><PipelineStep n="01" title="استقبال الملف" desc="فحص النوع والحجم والبصمة" active/><PipelineStep n="02" title="استخراج البنية" desc="تحديد الوحدات والاعتماديات"/><PipelineStep n="03" title="التحليل العميق" desc="استخراج الأدلة والعلاقات"/><PipelineStep n="04" title="تقرير النتائج" desc="ملخص قابل للتصدير"/></div><div className="pipeline-note"><CircleHelp size={15}/> تظهر هنا مراحل العمل؛ ابدأ الاتصال بمحرك REA من اللوحة أعلاه.</div></div></section></>}
 
           {page === 'rebuild' && <section className="panel empty-workspace"><div className="empty-icon"><WandSparkles size={26}/></div><h3>مساحة إعادة البناء</h3><p>ستظهر هنا المشاريع الناتجة عن التحليل، مع محرر الملفات وسجل التعديلات وخيارات التصدير.</p><div className="feature-pills"><span><GitBranch size={14}/> إصدارات متتابعة</span><span><Code2 size={14}/> محرر المصدر</span><span><FileArchive size={14}/> تصدير الحزمة</span></div><button className="button-primary" onClick={() => setPage('analysis')}>ابدأ بتحليل مشروع <ChevronLeft size={16}/></button></section>}
 
@@ -210,7 +286,7 @@ function App() {
 
           {page === 'settings' && <section className="settings-grid"><div className="panel settings-panel"><div className="panel-heading"><div><h3>مزوّد الذكاء الاصطناعي</h3><p>أدخل مفتاحك لاستخدام المساعد مباشرة</p></div><div className="panel-icon"><Sparkles size={17}/></div></div><label className="setting-label">المزوّد<select value={aiProvider} onChange={e => { const value = e.target.value as AiProvider; setAiProvider(value); setAiModel(value === 'gemini' ? 'gemini-3.8-flash' : value === 'groq' ? 'llama-3.3-70b-versatile' : 'openrouter/auto') }}><option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="openrouter">OpenRouter</option></select></label><label className="setting-label">اسم النموذج<input value={aiModel} onChange={e => setAiModel(e.target.value)} placeholder="اسم النموذج من المزوّد" dir="ltr"/></label><label className="setting-label">مفتاح API<input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)} placeholder="ألصق مفتاح API هنا" dir="ltr" autoComplete="off"/></label><div className="notice-box"><LockKeyhole size={16}/><span>المفتاح يبقى في ذاكرة الصفحة فقط ولا يُحفظ في GitHub أو قاعدة بيانات. يُرسل مباشرة إلى مزوّدك من المتصفح، لذا لا تستخدم جهازاً عاماً.</span></div><button className="button-primary" onClick={() => setPage('assistant')} disabled={!aiKey.trim() || !aiModel.trim()}><Bot size={15}/> فتح المساعد</button></div><div className="panel settings-panel"><div className="panel-heading"><div><h3>خدمة REA</h3><p>محرك التحليل العكسي الأساسي</p></div><div className="status-pill status-running">MCP متاح للاتصال</div></div><div className="connection-row"><span>حالة MCP</span><strong>اختبر الاتصال من صفحة التحليل</strong></div><div className="connection-row"><span>مسار التطبيق</span><strong dir="ltr">/api/rea</strong></div><div className="connection-row"><span>النقل</span><strong>Streamable HTTP</strong></div><button className="button-secondary full" onClick={() => setPage('analysis')}>فتح لوحة REA</button></div></section>}
 
-          {page === 'assistant' && <section className="assistant-layout"><div className="panel assistant-chat"><div className="panel-heading"><div><h3>محادثة REA AI</h3><p>استخدم المساعد لشرح المخرجات والتخطيط لإعادة البناء</p></div><div className="panel-icon"><Bot size={18}/></div></div><div className="chat-messages">{aiMessages.length === 0 ? <div className="chat-empty"><div className="empty-icon"><Sparkles size={24}/></div><strong>ابدأ محادثة تقنية</strong><span>اسأل عن بنية التطبيق، نتائج التحليل، أو كيفية إعادة بناء ميزة معينة.</span></div> : aiMessages.map((message,index) => <div className={`chat-message ${message.role}`} key={index}><div className="chat-message-label">{message.role === 'user' ? 'أنت' : 'المساعد'}</div><p>{message.content}</p></div>)}{aiSending && <div className="chat-message assistant"><div className="chat-message-label">المساعد</div><p className="typing">جارٍ إعداد الإجابة...</p></div>}</div><div className="chat-compose"><textarea value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendAiMessage() } }} placeholder="اكتب سؤالك التقني هنا..." rows={2}/><button className="button-primary" onClick={() => void sendAiMessage()} disabled={aiSending || !aiPrompt.trim()}>{aiSending ? <Activity size={16}/> : <Send size={16}/>} إرسال</button></div></div><aside className="panel assistant-side"><h3>جلسة المساعد</h3><p>المزوّد الحالي</p><div className="connection-row"><span>الخدمة</span><strong>{aiProvider === 'gemini' ? 'Google Gemini' : aiProvider === 'groq' ? 'Groq' : 'OpenRouter'}</strong></div><div className="connection-row"><span>النموذج</span><strong dir="ltr">{aiModel}</strong></div><div className="assistant-tip"><ShieldCheck size={16}/> لم تُرفق ملفاتك تلقائياً بعد؛ أرسل النص أو تقرير REA داخل المحادثة كي يحلله المساعد.</div><button className="button-secondary full" onClick={() => setPage('settings')}>تغيير إعدادات API</button><button className="text-button clear-chat" onClick={() => setAiMessages([])}>مسح المحادثة الحالية</button></aside></section>}
+          {page === 'assistant' && <AgentChat provider={aiProvider} apiKey={aiKey} model={aiModel} onOpenSettings={() => setPage('settings')} />}
 
           <footer className="footer"><span>REA AI STUDIO <b>·</b> BUILD 0.1.0</span><span>صُممت لتكون مساحة عملك للتحليل والبناء.</span></footer>
         </div>

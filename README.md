@@ -7,7 +7,9 @@
 - لوحة مشاريع وإحصاءات وصفحات التحليل وإعادة البناء والملفات وسجل النشاط.
 - لوحة اتصال فعلية بخادم REA Cloud عبر MCP Streamable HTTP، مع اكتشاف الأدوات واستدعائها.
 - مسار Vercel `/api/rea` يمرّر MCP إلى خادم REA Cloud.
-- مساعد AI يدعم Gemini وGroq وOpenRouter باستخدام مفتاح المستخدم (BYOK).
+- مساحة دردشة AI تفاعلية تدعم Gemini وGroq وOpenRouter باستخدام مفتاح المستخدم (BYOK).
+- وضع وكيل REA: يقرأ قائمة أدوات MCP، ويقترح الأداة ومدخلاتها، ثم ينتظر موافقة المستخدم قبل التنفيذ.
+- إعدادات مزوّد الذكاء الاصطناعي واسم النموذج تُحفظ محلياً؛ مفتاح API يبقى في الذاكرة فقط.
 - مفاتيح AI تبقى في ذاكرة الصفحة ولا تحفظ في المستودع أو قاعدة بيانات.
 - GitHub Actions للتحقق من TypeScript وبناء نسخة الويب.
 - REA الرسمي مربوط كمكوّن Git Submodule في `vendor/rea` مع تهيئة recursive في CI.
@@ -35,8 +37,7 @@ npm run build
 
 ## حدود النسخة الحالية
 - اختيار الملفات في الواجهة محلي في المتصفح؛ لم يُنفّذ بعد رفع مجزأ إلى تخزين دائم أو تمرير الملف مباشرة إلى أدوات REA التي تتطلب مساراً على الخادم.
-- استدعاء أدوات MCP متاح، لكن اختيار الأداة ومدخلاتها يتمان يدوياً من اللوحة.
-- مساعد الذكاء الاصطناعي مستقل حالياً؛ لا يقرأ تلقائياً مخرجات REA أو الملفات إلا إذا أرسلت نصها في المحادثة.
+- وكيل المحادثة يستطيع اقتراح استدعاء أدوات MCP وتنفيذها بعد الموافقة، لكنه لا يرفع ملفات APK تلقائياً ولا يمررها إلى أدوات REA التي تتطلب مساراً على الخادم.
 - محرر إعادة البناء، تنفيذ pipeline تلقائي، تخزين المشاريع والملفات على قاعدة بيانات، وتصدير APK/ZIP لم تُنفذ بعد.
 - لا توجد سعة ملفات غير محدودة عملياً؛ ستعتمد الحدود على التخزين والاستضافة والوقت المتاح للتنفيذ.
 
@@ -47,3 +48,26 @@ npm run build
 
 ## الترخيص
 واجهة REA AI Studio مستقلة. محرك REA الأصلي مرخّص وفق MIT؛ راجع مستودعه الرسمي وملفات الترخيص والإشعارات الخاصة به.
+
+
+## Supabase connection
+
+REA AI Studio uses the existing Supabase project for email/password authentication, project metadata, and private APK/ZIP uploads.
+
+Set these Vite variables in Vercel (Production, Preview, and Development), or copy `.env.example` to `.env.local` for local development:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+
+Only the Supabase publishable key is used in the browser. Do not add a `service_role` or secret key to Vite variables. Database and Storage access are restricted by Supabase RLS policies to the signed-in user's own records and files. The private `apk-temp` bucket currently limits each file to 100 MB.
+
+Uploaded files are stored securely and project metadata is persisted. This connection does not yet start APK decompilation or rebuild jobs; those execution workflows remain a separate implementation step.
+
+
+## Android APK analysis workflow
+
+A free GitHub Actions workflow is prepared at `.github/workflows/analyze-apk.yml`. It accepts a one-hour signed download URL from the private Supabase `apk-temp` bucket, a project UUID, and the original APK filename. It downloads the APK, verifies the pinned REA JADX bridge JAR, decodes Android resources with Apktool, decompiles Java/Kotlin sources with JADX, runs REA Android package/class analysis, and publishes the results as a one-day GitHub Actions artifact.
+
+To prepare an input, upload one APK from the Analysis page; the app creates a one-hour signed URL and displays the project ID and filename. Copy the URL, then run the workflow manually and supply all three inputs. Treat the signed URL as a temporary password and do not share it. This workflow currently accepts APK files only; ZIP source projects and AAB inputs need separate workflows.
+
+GitHub requires a `workflow_dispatch` workflow to exist on the repository default branch before it can be manually dispatched. The workflow is therefore staged on `feature/agent-chat-settings-rebuild` and is not active until this pull request is reviewed and merged. It does not yet apply AI edits, rebuild/sign an APK, or write result artifacts back into Supabase.

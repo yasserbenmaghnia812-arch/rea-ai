@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import ReaMcpPanel from './ReaMcpPanel'
 import AgentChat from './AgentChat'
 import { type AiProvider } from './ai'
+import { supabase } from './supabase'
+import { useAuth } from './AuthGate'
 import {
   Activity, ArrowDownLeft, ArrowUpLeft, Bell, Binary, Box, Check,
   ChevronDown, ChevronLeft, CircleHelp, Clock3, Code2, Command,
@@ -13,13 +15,7 @@ import {
 } from 'lucide-react'
 
 type Page = 'overview' | 'projects' | 'analysis' | 'rebuild' | 'files' | 'activity' | 'settings' | 'assistant'
-type Project = { id: number; name: string; kind: string; updated: string; status: 'جاهز' | 'قيد التحليل' | 'مسودة'; files: number }
-
-const initialProjects: Project[] = [
-  { id: 1, name: 'تطبيق المتجر الذكي', kind: 'Android · APK', updated: 'منذ 12 دقيقة', status: 'جاهز', files: 18 },
-  { id: 2, name: 'لوحة تحكم الويب', kind: 'Web · ZIP', updated: 'أمس، 21:40', status: 'قيد التحليل', files: 42 },
-  { id: 3, name: 'مكتبة النظام', kind: 'Binary · SO', updated: 'منذ يومين', status: 'مسودة', files: 7 },
-]
+type Project = { id: string | number; name: string; kind: string; updated: string; status: 'جاهز' | 'قيد التحليل' | 'مسودة' | 'تم الرفع'; files: number }
 
 const navGroups: { label: string; items: { id: Page; label: string; icon: LucideIcon }[] }[] = [
   { label: 'مساحة العمل', items: [
@@ -48,18 +44,14 @@ const pageTitles: Record<Page, { title: string; subtitle: string }> = {
 }
 
 function App() {
+  const { user, signOut } = useAuth()
   const [page, setPage] = useState<Page>('overview')
-  const [projects, setProjects] = useState<Project[]>(() => {
-    try {
-      const saved = localStorage.getItem('rea-ai-projects')
-      return saved ? JSON.parse(saved) as Project[] : initialProjects
-    } catch {
-      return initialProjects
-    }
-  })
+  const [projects, setProjects] = useState<Project[]>([])
   const [query, setQuery] = useState('')
   const [modal, setModal] = useState(false)
   const [projectName, setProjectName] = useState('')
+  const [analysisName, setAnalysisName] = useState('')
+  const [isUploading, setIsUploading] = useState(false)
   const [mobileNav, setMobileNav] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [notice, setNotice] = useState('')
@@ -74,20 +66,115 @@ function App() {
   const filtered = useMemo(() => projects.filter(p => p.name.toLowerCase().includes(query.toLowerCase())), [projects, query])
 
   useEffect(() => {
-    localStorage.setItem('rea-ai-projects', JSON.stringify(projects))
-  }, [projects])
+    let active = true
+    async function loadProjects() {
+      if (!supabase) return
+      const { data, error } = await supabase
+        .from('projects')
+        .select('id,name,original_filename,status,updated_at')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+      if (!active) return
+      if (error) {
+        setNotice(`تعذر تحميل المشاريع من Supabase: ${error.message}`)
+        return
+      }
+      setProjects((data ?? []).map(row => {
+        const hasFile = Boolean(row.original_filename)
+        const extension = row.original_filename?.split('.').pop()?.toUpperCase() || ''
+        const status: Project['status'] = row.status === 'completed' ? 'جاهز'
+          : ['queued', 'running', 'analyzing'].includes(row.status) ? 'قيد التحليل'
+          : hasFile && row.status === 'uploaded' ? 'تم الرفع' : 'مسودة'
+        return {
+          id: row.id,
+          name: row.name,
+          kind: extension ? `ملف · ${extension}` : 'مشروع جديد',
+          updated: 'محفوظ في السحابة',
+          status,
+          files: hasFile ? 1 : 0,
+        }
+      }))
+    }
+    void loadProjects()
+    return () => { active = false }
+  }, [user.id])
 
   useEffect(() => {
     localStorage.setItem('rea-ai-provider', aiProvider)
     localStorage.setItem('rea-ai-model', aiModel)
   }, [aiProvider, aiModel])
 
-  function addProject() {
-    if (!projectName.trim()) return
-    setProjects(prev => [{ id: Date.now(), name: projectName.trim(), kind: 'مشروع جديد', updated: 'الآن', status: 'مسودة', files: 0 }, ...prev])
+  async function addProject() {
+    if (!projectName.trim() || !supabase) return
+    const { data, error } = await supabase.from('projects').insert({
+      user_id: user.id,
+      name: projectName.trim(),
+      status: 'uploaded',
+    }).select('id,name,original_filename,status,updated_at').single()
+    if (error) {
+      setNotice(`تعذر حفظ المشروع: ${error.message}`)
+      return
+    }
+    setProjects(prev => [{ id: data.id, name: data.name, kind: 'مشروع جديد', updated: 'الآن', status: 'مسودة', files: 0 }, ...prev])
     setProjectName('')
     setModal(false)
     setPage('projects')
+  }
+
+  async function uploadSelectedFiles() {
+    if (!supabase || files.length === 0 || isUploading) {
+      if (files.length === 0) setNotice('اختر ملف APK أو ZIP أو ملفاً مدعوماً أولاً.')
+      return
+    }
+    setIsUploading(true)
+    let uploadedCount = 0
+    try {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index]
+        if (file.size > 100 * 1024 * 1024) throw new Error(`${file.name}: يتجاوز الحد الأقصى 100MB.`)
+        const baseName = analysisName.trim() || file.name.replace(/\.[^.]+$/, '')
+        const projectLabel = files.length > 1 ? `${baseName} ${index + 1}` : baseName
+        const { data: project, error: projectError } = await supabase.from('projects').insert({
+          user_id: user.id,
+          name: projectLabel,
+          original_filename: file.name,
+          status: 'uploaded',
+        }).select('id,name,original_filename,status,updated_at').single()
+        if (projectError) throw projectError
+
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload.bin'
+        const storagePath = `${user.id}/${project.id}/${safeName}`
+        const { error: uploadError } = await supabase.storage.from('apk-temp').upload(storagePath, file, {
+          contentType: file.type || 'application/octet-stream',
+          upsert: false,
+        })
+        if (uploadError) {
+          await supabase.from('projects').update({ status: 'failed' }).eq('id', project.id).eq('user_id', user.id)
+          throw uploadError
+        }
+        const { error: updateError } = await supabase.from('projects').update({ storage_path: storagePath }).eq('id', project.id).eq('user_id', user.id)
+        if (updateError) throw updateError
+
+        const extension = file.name.split('.').pop()?.toUpperCase() || ''
+        setProjects(prev => [{
+          id: project.id,
+          name: project.name,
+          kind: extension ? `ملف · ${extension}` : 'ملف مرفوع',
+          updated: 'الآن',
+          status: 'تم الرفع',
+          files: 1,
+        }, ...prev])
+        uploadedCount += 1
+      }
+      setFiles([])
+      setAnalysisName('')
+      setNotice(`تم رفع ${uploadedCount} ملفاً إلى التخزين الخاص في Supabase. لم يبدأ التحليل بعد؛ سيُربط محرك التنفيذ في المرحلة التالية.`)
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'حدث خطأ أثناء رفع الملفات.'
+      setNotice(`توقف الرفع: ${message}`)
+    } finally {
+      setIsUploading(false)
+    }
   }
 
   function addFiles(list: FileList | null) {
@@ -97,7 +184,7 @@ function App() {
     window.setTimeout(() => setNotice(''), 3500)
   }
 
-  const statusClass = (status: Project['status']) => status === 'جاهز' ? 'status-ready' : status === 'قيد التحليل' ? 'status-running' : 'status-draft'
+  const statusClass = (status: Project['status']) => status === 'جاهز' || status === 'تم الرفع' ? 'status-ready' : status === 'قيد التحليل' ? 'status-running' : 'status-draft'
 
   return (
     <div className="app-shell">
@@ -129,8 +216,8 @@ function App() {
             <div className="usage-line"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div>
             <div className="usage-foot"><span>واجهة تجريبية</span><span>v0.1.0</span></div>
           </div>
-          <button className="profile-row" onClick={() => setPage('settings')}>
-            <div className="profile-avatar">YB</div><div className="profile-copy"><strong>Yasser Benmaghnia</strong><span>إعدادات الحساب</span></div><MoreHorizontal size={18} className="muted-icon"/>
+          <button className="profile-row" onClick={() => void signOut()}>
+            <div className="profile-avatar">YB</div><div className="profile-copy"><strong>{user.email || 'حساب REA'}</strong><span>تسجيل الخروج</span></div><MoreHorizontal size={18} className="muted-icon"/>
           </button>
         </div>
       </aside>
@@ -183,7 +270,7 @@ function App() {
 
           {page === 'projects' && <section className="panel page-panel"><div className="panel-heading"><div><h3>كل المشاريع</h3><p>{filtered.length} مشاريع في مساحة العمل</p></div><button className="button-primary small" onClick={() => setModal(true)}><Plus size={15}/> مشروع جديد</button></div><ProjectTable projects={filtered} statusClass={statusClass} onOpen={() => setPage('analysis')}/></section>}
 
-          {page === 'analysis' && <><ReaMcpPanel /><section className="analysis-layout"><div className="panel upload-panel"><div className="panel-heading"><div><h3>مصدر التحليل</h3><p>اختر ملف التطبيق أو اسحبه إلى المساحة أدناه</p></div><div className="panel-icon"><UploadCloud size={18}/></div></div><button className="dropzone" onClick={() => fileInput.current?.click()}><input ref={fileInput} type="file" multiple hidden onChange={e => addFiles(e.target.files)}/><span className="upload-icon"><UploadCloud size={25}/></span><strong>اسحب الملفات وأفلتها هنا</strong><span>أو <u>تصفح الملفات</u> من جهازك</span><small>APK · AAB · ZIP · JAR · DEX · SO · EXE · ملفات المصدر</small></button>{files.length > 0 && <div className="selected-files"><div className="file-list-title">ملفات محددة ({files.length})</div>{files.map((f, i) => <div className="selected-file" key={i}><FileCode2 size={16}/><span>{f.name}</span><small>{(f.size / 1024 / 1024).toFixed(2)} MB</small><Check size={15}/></div>)}</div>}<div className="form-row"><label>اسم التحليل<input placeholder="مثال: تحليل تطبيق المتجر" /></label><label>نوع التحليل<select defaultValue="auto"><option value="auto">تلقائي — اكتشاف نوع الملف</option><option>Android / APK</option><option>Web / JavaScript</option><option>Binary / Native</option><option>.NET Assembly</option></select></label></div><button className="button-primary full" onClick={() => setNotice('واجهة التحليل جاهزة؛ تشغيل محرك REA الفعلي سيُفعّل بعد توصيل خدمة التنفيذ.')}> <Zap size={16}/> تجهيز عملية التحليل</button><p className="form-note"><ShieldCheck size={14}/> لن يتم إرسال الملفات إلى أي خدمة قبل ربط إعدادات التخزين والتنفيذ.</p></div><div className="panel pipeline-panel"><h3>مراحل التحليل</h3><p>مسار العمل المتوقع داخل REA</p><div className="pipeline"><PipelineStep n="01" title="استقبال الملف" desc="فحص النوع والحجم والبصمة" active/><PipelineStep n="02" title="استخراج البنية" desc="تحديد الوحدات والاعتماديات"/><PipelineStep n="03" title="التحليل العميق" desc="استخراج الأدلة والعلاقات"/><PipelineStep n="04" title="تقرير النتائج" desc="ملخص قابل للتصدير"/></div><div className="pipeline-note"><CircleHelp size={15}/> تظهر هنا مراحل العمل؛ ابدأ الاتصال بمحرك REA من اللوحة أعلاه.</div></div></section></>}
+          {page === 'analysis' && <><ReaMcpPanel /><section className="analysis-layout"><div className="panel upload-panel"><div className="panel-heading"><div><h3>مصدر التحليل</h3><p>اختر ملف التطبيق أو اسحبه إلى المساحة أدناه</p></div><div className="panel-icon"><UploadCloud size={18}/></div></div><button className="dropzone" onClick={() => fileInput.current?.click()}><input ref={fileInput} type="file" accept=".apk,.aab,.zip,.jar,.dex,.so,.exe,application/octet-stream" multiple hidden onChange={e => addFiles(e.target.files)}/><span className="upload-icon"><UploadCloud size={25}/></span><strong>اسحب الملفات وأفلتها هنا</strong><span>أو <u>تصفح الملفات</u> من جهازك</span><small>APK · AAB · ZIP · JAR · DEX · SO · EXE · ملفات المصدر</small></button>{files.length > 0 && <div className="selected-files"><div className="file-list-title">ملفات محددة ({files.length})</div>{files.map((f, i) => <div className="selected-file" key={i}><FileCode2 size={16}/><span>{f.name}</span><small>{(f.size / 1024 / 1024).toFixed(2)} MB</small><Check size={15}/></div>)}</div>}<div className="form-row"><label>اسم التحليل<input value={analysisName} onChange={e => setAnalysisName(e.target.value)} placeholder="مثال: تحليل تطبيق المتجر" /></label><label>نوع التحليل<select defaultValue="auto"><option value="auto">تلقائي — اكتشاف نوع الملف</option><option>Android / APK</option><option>Web / JavaScript</option><option>Binary / Native</option><option>.NET Assembly</option></select></label></div><button className="button-primary full" onClick={() => void uploadSelectedFiles()} disabled={isUploading || files.length === 0}> <Zap size={16}/> {isUploading ? 'جارٍ الرفع الآمن…' : 'رفع الملفات إلى مساحة المشروع'}</button><p className="form-note"><ShieldCheck size={14}/> تُحفظ الملفات في bucket خاص، مع صلاحيات وصول تخص حسابك فقط. الحد الأقصى 100MB لكل ملف.</p></div><div className="panel pipeline-panel"><h3>مراحل التحليل</h3><p>مسار العمل المتوقع داخل REA</p><div className="pipeline"><PipelineStep n="01" title="استقبال الملف" desc="فحص النوع والحجم والبصمة" active/><PipelineStep n="02" title="استخراج البنية" desc="تحديد الوحدات والاعتماديات"/><PipelineStep n="03" title="التحليل العميق" desc="استخراج الأدلة والعلاقات"/><PipelineStep n="04" title="تقرير النتائج" desc="ملخص قابل للتصدير"/></div><div className="pipeline-note"><CircleHelp size={15}/> تظهر هنا مراحل العمل؛ ابدأ الاتصال بمحرك REA من اللوحة أعلاه.</div></div></section></>}
 
           {page === 'rebuild' && <section className="panel empty-workspace"><div className="empty-icon"><WandSparkles size={26}/></div><h3>مساحة إعادة البناء</h3><p>ستظهر هنا المشاريع الناتجة عن التحليل، مع محرر الملفات وسجل التعديلات وخيارات التصدير.</p><div className="feature-pills"><span><GitBranch size={14}/> إصدارات متتابعة</span><span><Code2 size={14}/> محرر المصدر</span><span><FileArchive size={14}/> تصدير الحزمة</span></div><button className="button-primary" onClick={() => setPage('analysis')}>ابدأ بتحليل مشروع <ChevronLeft size={16}/></button></section>}
 

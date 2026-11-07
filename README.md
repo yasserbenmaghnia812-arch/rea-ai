@@ -62,3 +62,12 @@ Set these Vite variables in Vercel (Production, Preview, and Development), or co
 Only the Supabase publishable key is used in the browser. Do not add a `service_role` or secret key to Vite variables. Database and Storage access are restricted by Supabase RLS policies to the signed-in user's own records and files. The private `apk-temp` bucket currently limits each file to 100 MB.
 
 Uploaded files are stored securely and project metadata is persisted. This connection does not yet start APK decompilation or rebuild jobs; those execution workflows remain a separate implementation step.
+
+
+## Android APK analysis workflow
+
+A free GitHub Actions workflow is prepared at `.github/workflows/analyze-apk.yml`. It accepts a one-hour signed download URL from the private Supabase `apk-temp` bucket, a project UUID, and the original APK filename. It downloads the APK, verifies the pinned REA JADX bridge JAR, decodes Android resources with Apktool, decompiles Java/Kotlin sources with JADX, runs REA Android package/class analysis, and publishes the results as a one-day GitHub Actions artifact.
+
+To prepare an input, upload one APK from the Analysis page; the app creates a one-hour signed URL and displays the project ID and filename. Copy the URL, then run the workflow manually and supply all three inputs. Treat the signed URL as a temporary password and do not share it. This workflow currently accepts APK files only; ZIP source projects and AAB inputs need separate workflows.
+
+GitHub requires a `workflow_dispatch` workflow to exist on the repository default branch before it can be manually dispatched. The workflow is therefore staged on `feature/agent-chat-settings-rebuild` and is not active until this pull request is reviewed and merged. It does not yet apply AI edits, rebuild/sign an APK, or write result artifacts back into Supabase.

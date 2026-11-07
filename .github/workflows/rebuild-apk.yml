@@ -1,0 +1,107 @@
+name: Rebuild and Sign Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "Private Supabase signed URL for the original APK"
+        required: true
+        type: string
+      project_id:
+        description: "REA AI Studio project UUID"
+        required: true
+        type: string
+      original_filename:
+        description: "Original APK filename"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rea-apk-rebuild-${{ inputs.project_id }}
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Validate source
+        shell: bash
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          ORIGINAL_FILENAME: ${{ inputs.original_filename }}
+        run: |
+          set -euo pipefail
+          [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "Invalid project UUID"; exit 1; }
+          [[ "$SOURCE_URL" == https://wrphphtelyuedntycbop.supabase.co/storage/v1/object/sign/apk-temp/* ]] || { echo "Source must be a signed URL from the private apk-temp bucket"; exit 1; }
+          [[ "$(basename "$ORIGINAL_FILENAME")" == *.apk ]] || { echo "Only APK files are supported"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Android build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0" "platforms;android-35"
+          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+
+      - name: Install Apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools output
+          curl -fsSL -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.2/apktool_3.0.2.jar
+          printf '#!/usr/bin/env bash\nexec java -jar "%s/tools/apktool.jar" "$@"\n' "$GITHUB_WORKSPACE" > tools/apktool
+          chmod +x tools/apktool
+          echo "$GITHUB_WORKSPACE/tools" >> "$GITHUB_PATH"
+
+      - name: Download and decode APK
+        shell: bash
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+          ORIGINAL_FILENAME: ${{ inputs.original_filename }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 2 "$SOURCE_URL" -o input.apk
+          test -s input.apk
+          tools/apktool d --force input.apk -o decoded
+
+      - name: Rebuild, align, and sign
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          tools/apktool b decoded -o output/rea-rebuilt-unsigned.apk
+          zipalign -f -v 4 output/rea-rebuilt-unsigned.apk output/rea-rebuilt-aligned.apk
+          keytool -genkeypair -v -keystore output/rea-debug.keystore -storepass android -keypass android -alias rea-debug -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=REA AI Studio, OU=Debug, O=REA, L=Algiers, C=DZ"
+          apksigner sign --ks output/rea-debug.keystore --ks-pass pass:android --key-pass pass:android --out output/rea-rebuilt-debug-signed.apk output/rea-rebuilt-aligned.apk
+          apksigner verify --verbose output/rea-rebuilt-debug-signed.apk
+          sha256sum output/rea-rebuilt-debug-signed.apk > output/sha256.txt
+          cat > output/BUILD-INFO.txt <<'EOF'
+          This is a rebuilt APK signed with an ephemeral debug keystore.
+          It is not a production/release signature and cannot update an installed app signed with a different key.
+          Rebuilding the decoded APK does not apply AI source edits; it verifies the decode/build/sign pipeline.
+          EOF
+
+      - name: Upload rebuilt APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rea-rebuilt-debug-apk-${{ inputs.project_id }}
+          path: |
+            output/rea-rebuilt-debug-signed.apk
+            output/sha256.txt
+            output/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 7

@@ -71,3 +71,10 @@ A free GitHub Actions workflow is prepared at `.github/workflows/analyze-apk.yml
 To prepare an input, upload one APK from the Analysis page; the app creates a one-hour signed URL and displays the project ID and filename. The Analysis page can now dispatch the workflow directly using a fine-grained GitHub token with Actions read/write permission, then query the latest run status. The token is held only in component memory and is not persisted. Treat the signed URL as a temporary password and do not share it. This workflow currently accepts APK files only; ZIP source projects and AAB inputs need separate workflows.
 
 The `workflow_dispatch` workflow is active on the default branch. The in-app runner starts the GitHub Actions job and links to its run page, where the one-day artifact can be downloaded. This stage analyzes and decompiles APKs only; it does not yet apply AI edits, rebuild/sign a modified APK, or write result artifacts back into Supabase.
+
+
+## APK rebuild and debug signing
+
+The Analysis page now offers a second GitHub Actions operation, **Rebuild and debug-sign APK**. It downloads the same private Supabase APK, decodes it with Apktool 3.0.2, rebuilds the decoded package, aligns it with Android build-tools, signs it with an ephemeral debug keystore, verifies the signature, and publishes the APK plus SHA-256 checksum as a seven-day GitHub Actions artifact.
+
+This is a pipeline validation and debug build, not an AI-modified release. No AI patch is applied yet. The debug keystore is generated for each run and is not retained; therefore this APK cannot update an installed app signed with another key and is not suitable for Play Store release. Production signing requires a user-owned release keystore kept in protected GitHub Actions secrets. The source APK is not modified.

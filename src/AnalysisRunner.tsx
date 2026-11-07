@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Activity, AlertTriangle, CheckCircle2, ExternalLink, Github, LoaderCircle, Play, RefreshCw, ShieldCheck } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle2, ExternalLink, Github, LoaderCircle, Play, RefreshCw, ShieldCheck, Wrench } from 'lucide-react'
 
 type Props = {
   projectId: string
@@ -18,7 +18,8 @@ type WorkflowRun = {
 
 const OWNER = 'yasserbenmaghnia812-arch'
 const REPO = 'rea-ai'
-const WORKFLOW = 'analyze-apk.yml'
+const ANALYZE_WORKFLOW = 'analyze-apk.yml'
+const REBUILD_WORKFLOW = 'rebuild-apk.yml'
 
 export default function AnalysisRunner({ projectId, filename, sourceUrl }: Props) {
   const [token, setToken] = useState('')
@@ -28,6 +29,7 @@ export default function AnalysisRunner({ projectId, filename, sourceUrl }: Props
   const [error, setError] = useState('')
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [startedAt, setStartedAt] = useState('')
+  const [activeWorkflow, setActiveWorkflow] = useState(ANALYZE_WORKFLOW)
 
   async function githubRequest(path: string, init: RequestInit = {}) {
     const response = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/${path}`, {
@@ -63,10 +65,11 @@ export default function AnalysisRunner({ projectId, filename, sourceUrl }: Props
     setError('')
     setNotice('')
     setRun(null)
+    setActiveWorkflow(ANALYZE_WORKFLOW)
     const started = new Date().toISOString()
     setStartedAt(started)
     try {
-      await githubRequest(`actions/workflows/${WORKFLOW}/dispatches`, {
+      await githubRequest(`actions/workflows/${ANALYZE_WORKFLOW}/dispatches`, {
         method: 'POST',
         body: JSON.stringify({
           ref: 'main',
@@ -81,12 +84,30 @@ export default function AnalysisRunner({ projectId, filename, sourceUrl }: Props
     }
   }
 
+  async function rebuild() {
+    if (!token.trim()) { setError('أدخل GitHub Token بصلاحية Actions: Read and write.'); return }
+    if (!filename.toLowerCase().endsWith('.apk')) { setError('إعادة البناء تدعم ملفات APK فقط.'); return }
+    setBusy(true); setError(''); setNotice(''); setRun(null)
+    const started = new Date().toISOString()
+    setStartedAt(started)
+    setActiveWorkflow(REBUILD_WORKFLOW)
+    try {
+      await githubRequest(`actions/workflows/${REBUILD_WORKFLOW}/dispatches`, {
+        method: 'POST',
+        body: JSON.stringify({ ref: 'main', inputs: { source_url: sourceUrl, project_id: projectId, original_filename: filename } }),
+      })
+      setNotice('تم إرسال APK إلى مسار إعادة البناء والتوقيع التجريبي. حدّث الحالة لمتابعة المهمة.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'تعذر بدء إعادة البناء.')
+    } finally { setBusy(false) }
+  }
+
   async function refreshRun() {
     if (!token.trim()) return
     setRefreshing(true)
     setError('')
     try {
-      const response = await githubRequest(`actions/workflows/${WORKFLOW}/runs?branch=main&event=workflow_dispatch&per_page=10`)
+      const response = await githubRequest(`actions/workflows/${activeWorkflow}/runs?branch=main&event=workflow_dispatch&per_page=10`)
       const data = await response.json() as { workflow_runs?: WorkflowRun[] }
       const candidates = (data.workflow_runs || []).filter(item =>
         !startedAt || new Date(item.created_at).getTime() >= new Date(startedAt).getTime() - 120000
@@ -122,6 +143,7 @@ export default function AnalysisRunner({ projectId, filename, sourceUrl }: Props
     <div className="notice-box"><ShieldCheck size={16}/><span>يُستخدم الرمز في هذه الجلسة فقط ولا يُحفظ. أنشئ رمزاً محدوداً لهذا المستودع بصلاحية Actions: Read and write. لا ترسله في المحادثة ولا تضفه إلى GitHub كملف.</span></div>
     <div className="analysis-runner-actions">
       <button className="button-primary" onClick={() => void dispatch()} disabled={busy || !token.trim()}>{busy ? <LoaderCircle className="spin" size={15}/> : <Play size={15}/>} {busy ? 'جارٍ إرسال المهمة…' : 'تشغيل التحليل الآن'}</button>
+      <button className="button-primary" onClick={() => void rebuild()} disabled={busy || !token.trim()}>{busy ? <LoaderCircle className="spin" size={15}/> : <Wrench size={15}/>} إعادة البناء والتوقيع التجريبي</button>
       <button className="button-secondary" onClick={() => void refreshRun()} disabled={refreshing || !token.trim()}>{refreshing ? <LoaderCircle className="spin" size={15}/> : <RefreshCw size={14}/>} تحديث الحالة</button>
       <a className="button-secondary runner-link" href="https://github.com/yasserbenmaghnia812-arch/rea-ai/actions/workflows/analyze-apk.yml" target="_blank" rel="noreferrer"><Github size={14}/> صفحة GitHub Actions <ExternalLink size={13}/></a>
     </div>
@@ -129,8 +151,8 @@ export default function AnalysisRunner({ projectId, filename, sourceUrl }: Props
     {error && <div className="mcp-error"><AlertTriangle size={15}/>{error}</div>}
     {run && <div className="runner-result">
       <div><strong>{run.name || 'Analyze Android APK'}</strong><span className={run.status === 'completed' ? 'runner-complete' : 'runner-running'}>{run.status === 'completed' ? run.conclusion || 'completed' : run.status}</span></div>
-      <a href={run.html_url} target="_blank" rel="noreferrer">فتح سجل التشغيل والـ Artifacts <ExternalLink size={13}/></a>
+      <a href={run.html_url} target="_blank" rel="noreferrer">فتح سجل التشغيل وتنزيل APK الناتج أو ملفات التحليل <ExternalLink size={13}/></a>
     </div>}
-    <p className="form-note"><ShieldCheck size={14}/> الرابط المؤقت صالح لساعة واحدة. النتائج المنشورة كـ Artifact متاحة ليوم واحد. التحليل الحالي لا يعدّل APK ولا يعيد بناءه أو توقيعه تلقائياً.</p>
+    <p className="form-note"><ShieldCheck size={14}/> الرابط المؤقت صالح لساعة واحدة. النتائج المنشورة كـ Artifact متاحة ليوم واحد. إعادة البناء تنتج توقيع Debug مؤقتاً فقط؛ لا تطبّق تعديلات AI ولا تصلح توقيع إصدار المتجر.</p>
   </section>
 }

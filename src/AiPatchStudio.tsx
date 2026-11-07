@@ -27,6 +27,7 @@ export default function AiPatchStudio(props: Props) {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [runUrl, setRunUrl] = useState('')
+  const [startedAt, setStartedAt] = useState('')
 
   async function selectFile(selected?: File) {
     setError(''); setProposal(null); setFile(selected || null); setSource('')
@@ -71,6 +72,8 @@ export default function AiPatchStudio(props: Props) {
   async function approve() {
     if (!proposal || !file || !supabase || !githubToken.trim()) { setError('تحقق من الاقتراح وSupabase وGitHub Token بصلاحية Actions: Read and write.'); return }
     setBusy(true); setError(''); setMessage(''); setRunUrl('')
+    const started = new Date().toISOString()
+    setStartedAt(started)
     try {
       const manifest = { version: 1, project_id: props.projectId, patches: [{ path: path.trim().replace(/\\/g, '/'), expected_sha256: expectedHash, content: proposal.content }] }
       const objectPath = props.userId + '/' + props.projectId + '/patches/' + crypto.randomUUID() + '.json'
@@ -98,7 +101,7 @@ export default function AiPatchStudio(props: Props) {
       })
       if (!response.ok) throw new Error('GitHub API ' + response.status)
       const data = await response.json()
-      const latest = data.workflow_runs && data.workflow_runs[0]
+      const latest = (data.workflow_runs || []).find((item: { created_at: string }) => new Date(item.created_at).getTime() >= new Date(startedAt).getTime() - 120000)
       if (latest) { setRunUrl(latest.html_url); setMessage('حالة آخر تشغيل: ' + latest.status + (latest.conclusion ? ' — ' + latest.conclusion : '')) }
       else setMessage('لم يظهر تشغيل بعد.')
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'تعذر تحديث الحالة.') }
@@ -116,7 +119,7 @@ export default function AiPatchStudio(props: Props) {
     {proposal && <div className="ai-patch-proposal"><div className="ai-patch-proposal-title"><CheckCircle2 size={16}/><strong>اقتراح — لم يُطبّق بعد</strong></div><p>{proposal.summary}</p><textarea className="ai-patch-code" readOnly value={proposal.content} rows={10} spellCheck={false} dir="ltr"/><label className="setting-label">GitHub Fine-grained Token<input type="password" value={githubToken} onChange={e => setGithubToken(e.target.value)} placeholder="Actions: Read and write" autoComplete="off" dir="ltr"/></label><div className="notice-box"><ShieldCheck size={15}/><span>الموافقة تطبق هذا النص فقط. يتحقق الخادم من SHA-256 ويرفض أي مسار خارج XML/SMALI. الأصل لا يُعدّل.</span></div><div className="ai-patch-actions"><button className="button-primary" onClick={() => void approve()} disabled={busy || !githubToken.trim()}>{busy ? <LoaderCircle className="spin" size={15}/> : <Play size={15}/>} موافقة وتطبيق التعديل</button><button className="button-secondary" onClick={() => setProposal(null)} disabled={busy}>رفض</button></div></div>}
     {message && <div className="mcp-idle"><CheckCircle2 size={15}/>{message}</div>}
     {error && <div className="mcp-error"><AlertTriangle size={15}/>{error}</div>}
-    <button className="button-secondary" onClick={() => void checkRun()} disabled={busy || !githubToken.trim()}>تحديث حالة البناء</button>
+    {startedAt && <button className="button-secondary" onClick={() => void checkRun()} disabled={busy || !githubToken.trim()}>تحديث حالة البناء</button>}
     {runUrl && <p><a href={runUrl} target="_blank" rel="noreferrer">فتح GitHub Actions وتنزيل APK الناتج</a></p>}
     <p className="form-note"><ShieldCheck size={14}/> مفتاح AI وGitHub Token لا يُحفظان. توقيع الناتج Debug مؤقت.</p>
   </section>

@@ -73,7 +73,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  if (!isSupabaseConfigured || !supabase) {
+  const client = supabase
+  if (!isSupabaseConfigured || !client) {
     return <main className="auth-screen" dir="rtl"><section className="auth-card"><div className="auth-mark">REA</div><h1>اتصال قاعدة البيانات غير مكتمل</h1><p>أضف VITE_SUPABASE_URL و VITE_SUPABASE_PUBLISHABLE_KEY إلى إعدادات بيئة Vercel ثم أعد النشر.</p></section></main>
   }
 
@@ -105,5 +106,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     )
   }
 
-  return <AuthContext.Provider value={{ user, signOut: async () => { await supabase.auth.signOut() } }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, signOut: async () => { await client.auth.signOut() } }}>{children}</AuthContext.Provider>
 }

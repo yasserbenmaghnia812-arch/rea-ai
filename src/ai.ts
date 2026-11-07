@@ -1,5 +1,5 @@
 export type AiProvider = 'gemini' | 'groq' | 'openrouter'
-export type ChatMessage = { role: 'user' | 'assistant'; content: string }
+export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
 export async function requestAiReply(input: {
   provider: AiProvider
@@ -12,11 +12,13 @@ export async function requestAiReply(input: {
   if (!model.trim()) throw new Error('أدخل اسم النموذج.')
 
   if (provider === 'gemini') {
+    const systemInstruction = messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n')
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: messages.map(message => ({
+        ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
+        contents: messages.filter(message => message.role !== 'system').map(message => ({
           role: message.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: message.content }],
         })),

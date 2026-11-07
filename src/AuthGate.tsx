@@ -51,6 +51,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  async function signInWithGoogle() {
+    if (!supabase || busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin },
+      })
+      if (oauthError) throw oauthError
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'تعذر بدء تسجيل Google.')
+      setBusy(false)
+    }
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase) return
@@ -90,6 +106,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           <div className="auth-eyebrow">REA AI STUDIO</div>
           <h1>{mode === 'signin' ? 'تسجيل الدخول' : 'إنشاء حساب جديد'}</h1>
           <p>سجّل الدخول لحفظ مشاريعك وملفاتك في مساحة خاصة وآمنة.</p>
+          <button type="button" className="auth-google" onClick={() => void signInWithGoogle()} disabled={busy}>المتابعة باستخدام Google</button>
+          <div className="auth-divider">أو باستخدام البريد الإلكتروني</div>
           <form onSubmit={submit} className="auth-form">
             <label>البريد الإلكتروني<input type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" required /></label>
             <label>كلمة المرور<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} minLength={6} required /></label>

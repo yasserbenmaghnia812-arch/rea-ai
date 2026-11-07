@@ -1,34 +1,44 @@
 # REA AI Studio
 
-A new, independent workspace for an AI-assisted reverse-engineering and rebuild studio. Existing repositories are not modified.
+واجهة عمل عربية مستقلة للتحليل العكسي وإعادة بناء التطبيقات، مبنية باستخدام React وVite وTypeScript.
 
-## Project principles
-- Keep the upstream REA project intact and track it as an upstream dependency.
-- Provide a polished Arabic-first RTL interface.
-- Keep provider API keys on the server; never commit secrets.
-- Process large files in resumable chunks rather than relying on a single request body.
-- Treat analysis, generated files, and rebuilds as separate repeatable jobs.
+## ما تم إنجازه
+- واجهة عربية RTL بتصميم داكن احترافي بالأسود والأبيض والأزرق.
+- لوحة رئيسية، إحصاءات، مشاريع حديثة، نشاط سريع.
+- صفحات المشاريع والتحليل العكسي وإعادة البناء والملفات وسجل العمليات والإعدادات.
+- إنشاء مشاريع محلياً داخل الواجهة.
+- اختيار ملفات متعددة وإظهارها في قائمة الجلسة.
+- تصميم متجاوب للهاتف والكمبيوتر.
+- تجهيز نقاط ربط مستقبلية لخادم REA ومزوّد الذكاء الاصطناعي.
 
-## Upstream REA
-Source: https://github.com/morluto/rea  
-License: MIT (see upstream repository for the complete license and notices).
-
-The upstream source is tracked separately under `vendor/rea` as a Git submodule. After cloning this repository, run:
-
-```bash
-git submodule update --init --recursive
-```
-
-## Development
-Requires Node.js 22 or newer.
+## التشغيل المحلي
+يتطلب Node.js 22 أو أحدث.
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Current status
-This commit establishes the application shell and product architecture. REA runtime execution, provider adapters, resumable upload storage, and artifact export are staged for implementation and validation. Do not treat the interface shell as a completed reverse-engineering engine.
+## البناء
+```bash
+npm run build
+```
 
-## Security
-Do not expose provider keys in client-side code or commit them to Git. Configure provider credentials as server environment variables when the API service is added.
+## محرك REA
+المصدر الرسمي: https://github.com/morluto/rea  
+الحزمة: https://www.npmjs.com/package/rea-agents  
+الترخيص: MIT.
+
+تم تعريف المستودع الأصلي كـ Git submodule في `.gitmodules` تحت `vendor/rea`. بعد تهيئة مؤشر الـ submodule:
+
+```bash
+git submodule update --init --recursive
+```
+
+**الحالة الحالية:** الواجهة الأمامية تفاعلية، لكن عمليات التحليل الفعلية وتشغيل REA، تخزين الملفات على الخادم، مفاتيح مزوّد الذكاء الاصطناعي، وإعادة البناء/التصدير لم تُربط بعد. لا تعرض الواجهة هذه الوظائف على أنها منفذة حتى يتم توصيل الخدمات واختبارها.
+
+## الأمان
+- لا تضع مفاتيح API أو رموز GitHub في ملفات الواجهة أو المستودع.
+- تحفظ أسرار المزوّد على الخادم فقط بعد إضافة API آمن.
+- رفع الملفات الظاهر حالياً محلي داخل جلسة المتصفح، وليس إلى خادم.
+- حدود أحجام الملفات الفعلية ستعتمد على التخزين والاستضافة بعد تنفيذ الرفع المجزأ القابل للاستئناف.

@@ -149,8 +149,10 @@ export default function AgentChat({ provider, apiKey, model, onOpenSettings }: P
           setMessages(prev => [...prev, { role: 'assistant', content: reply }])
           await saveMessage('assistant', reply, activeConversationId)
         } else {
+          const approvalMessage = decision.summary + '\n\nراجِع اسم الأداة والمدخلات، ثم اضغط «موافقة وتنفيذ» لبدء العملية.'
           setPending(decision)
-          setMessages(prev => [...prev, { role: 'assistant', content: decision.summary + '\n\nراجِع اسم الأداة والمدخلات، ثم اضغط «موافقة وتنفيذ» لبدء العملية.' }])
+          setMessages(prev => [...prev, { role: 'assistant', content: approvalMessage }])
+          await saveMessage('assistant', approvalMessage, activeConversationId)
         }
       } else if (decision?.type === 'message') {
         setMessages(prev => [...prev, { role: 'assistant', content: decision.content }])
@@ -173,7 +175,9 @@ export default function AgentChat({ provider, apiKey, model, onOpenSettings }: P
     try {
       const result = await clientRef.current.callTool({ name: pending.tool, arguments: pending.arguments })
       const output = JSON.stringify(result, null, 2)
-      setMessages(prev => [...prev, { role: 'assistant', content: 'نتيجة تنفيذ ' + pending.tool + ':\n' + output }])
+      const executionMessage = 'نتيجة تنفيذ ' + pending.tool + ':\n' + output
+      setMessages(prev => [...prev, { role: 'assistant', content: executionMessage }])
+      if (conversationId) await saveMessage('assistant', executionMessage, conversationId)
       setPending(null)
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'فشل تنفيذ أداة REA.')

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ReaMcpPanel from './ReaMcpPanel'
 import { requestAiReply, type AiProvider, type ChatMessage } from './ai'
 import {
@@ -48,7 +48,14 @@ const pageTitles: Record<Page, { title: string; subtitle: string }> = {
 
 function App() {
   const [page, setPage] = useState<Page>('overview')
-  const [projects, setProjects] = useState(initialProjects)
+  const [projects, setProjects] = useState<Project[]>(() => {
+    try {
+      const saved = localStorage.getItem('rea-ai-projects')
+      return saved ? JSON.parse(saved) as Project[] : initialProjects
+    } catch {
+      return initialProjects
+    }
+  })
   const [query, setQuery] = useState('')
   const [modal, setModal] = useState(false)
   const [projectName, setProjectName] = useState('')
@@ -64,6 +71,10 @@ function App() {
   const fileInput = useRef<HTMLInputElement>(null)
   const current = pageTitles[page]
   const filtered = useMemo(() => projects.filter(p => p.name.toLowerCase().includes(query.toLowerCase())), [projects, query])
+
+  useEffect(() => {
+    localStorage.setItem('rea-ai-projects', JSON.stringify(projects))
+  }, [projects])
 
   async function sendAiMessage() {
     const prompt = aiPrompt.trim()

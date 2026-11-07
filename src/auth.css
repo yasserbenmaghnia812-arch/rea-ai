@@ -15,3 +15,8 @@
 .auth-error,.auth-message{padding:11px 12px;border-radius:9px;font-size:13px;line-height:1.6}
 .auth-error{background:#3a1720;color:#ffb4bd}
 .auth-message{background:#123322;color:#9be2b5}
+
+.auth-google{width:100%;border:1px solid #40516b;border-radius:11px;padding:13px 14px;background:#f7f9fc;color:#172033;font-weight:800;cursor:pointer}
+.auth-google:disabled{opacity:.6;cursor:wait}
+.auth-divider{display:flex;align-items:center;gap:12px;color:#8190a5;font-size:12px;margin:14px 0}
+.auth-divider:before,.auth-divider:after{content:"";height:1px;background:#34445d;flex:1}

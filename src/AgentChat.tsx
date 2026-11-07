@@ -3,6 +3,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { AlertTriangle, Bot, LoaderCircle, Plug, Send, ShieldCheck, Sparkles, Trash2, Wrench } from 'lucide-react'
 import { requestAiReply, type AiProvider, type ChatMessage } from './ai'
+import { supabase } from './supabase'
+import { useAuth } from './AuthGate'
 
 type ToolInfo = { name: string; description?: string; inputSchema?: Record<string, unknown> }
 type Props = { provider: AiProvider; apiKey: string; model: string; onOpenSettings: () => void }
@@ -23,7 +25,10 @@ function parseDecision(raw: string): { type: 'message'; content: string } | Agen
 }
 
 export default function AgentChat({ provider, apiKey, model, onOpenSettings }: Props) {
+  const { user } = useAuth()
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [conversationId, setConversationId] = useState<string | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(true)
   const [prompt, setPrompt] = useState('')
   const [sending, setSending] = useState(false)
   const [connected, setConnected] = useState(false)
@@ -37,6 +42,56 @@ export default function AgentChat({ provider, apiKey, model, onOpenSettings }: P
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, pending, sending])
+
+  useEffect(() => {
+    let active = true
+    async function restoreConversation() {
+      if (!supabase) { setHistoryLoading(false); return }
+      setHistoryLoading(true)
+      const { data: conversations, error } = await supabase
+        .from('conversations').select('id').eq('user_id', user.id)
+        .order('updated_at', { ascending: false }).limit(1)
+      if (!active) return
+      if (error) { setStatus('تعذر استرجاع المحادثة: ' + error.message); setHistoryLoading(false); return }
+      const latestId = conversations?.[0]?.id
+      if (latestId) {
+        const { data, error: messagesError } = await supabase
+          .from('messages').select('role,content').eq('conversation_id', latestId)
+          .eq('user_id', user.id).order('created_at', { ascending: true }).limit(200)
+        if (!active) return
+        if (messagesError) setStatus('تعذر تحميل الرسائل: ' + messagesError.message)
+        else {
+          setConversationId(latestId)
+          setMessages((data ?? []).filter(row => row.role === 'user' || row.role === 'assistant')
+            .map(row => ({ role: row.role as 'user' | 'assistant', content: row.content })))
+        }
+      }
+      if (active) setHistoryLoading(false)
+    }
+    void restoreConversation()
+    return () => { active = false }
+  }, [user.id])
+
+  async function ensureConversation(firstMessage: string) {
+    if (conversationId) return conversationId
+    if (!supabase) throw new Error('قاعدة البيانات غير متصلة.')
+    const { data, error } = await supabase.from('conversations')
+      .insert({ user_id: user.id, title: firstMessage.slice(0, 80) || 'محادثة جديدة' })
+      .select('id').single()
+    if (error) throw error
+    setConversationId(data.id)
+    return data.id as string
+  }
+
+  async function saveMessage(role: 'user' | 'assistant', content: string, id: string) {
+    if (!supabase || !content.trim()) return
+    const { error } = await supabase.from('messages').insert({
+      conversation_id: id, user_id: user.id, role, content,
+    })
+    if (error) throw error
+    await supabase.from('conversations').update({ updated_at: new Date().toISOString() })
+      .eq('id', id).eq('user_id', user.id)
+  }
 
   useEffect(() => () => {
     void clientRef.current?.close().catch(() => undefined)
@@ -70,6 +125,16 @@ export default function AgentChat({ provider, apiKey, model, onOpenSettings }: P
     const history: ChatMessage[] = [...messages, { role: 'user', content: text }]
     setMessages(history)
     setPrompt('')
+    let activeConversationId: string
+    try {
+      activeConversationId = await ensureConversation(text)
+      await saveMessage('user', text, activeConversationId)
+    } catch (error) {
+      setMessages(messages)
+      setStatus('تعذر حفظ رسالتك: ' + (error instanceof Error ? error.message : 'خطأ قاعدة البيانات'))
+      setSending(false)
+      return
+    }
     setPending(null)
     setSending(true)
     setStatus('')
@@ -80,18 +145,26 @@ export default function AgentChat({ provider, apiKey, model, onOpenSettings }: P
       const decision = parseDecision(raw)
       if (decision?.type === 'tool') {
         if (!connected || !tools.some(tool => tool.name === decision.tool)) {
-          setMessages(prev => [...prev, { role: 'assistant', content: 'لم أتمكن من اعتماد خطة التنفيذ: الأداة غير متاحة أو أن اتصال REA غير نشط. اتصل بالمحرك ثم أعد الطلب.' }])
+          const reply = 'لم أتمكن من اعتماد خطة التنفيذ: الأداة غير متاحة أو أن اتصال REA غير نشط. اتصل بالمحرك ثم أعد الطلب.'
+          setMessages(prev => [...prev, { role: 'assistant', content: reply }])
+          await saveMessage('assistant', reply, activeConversationId)
         } else {
+          const approvalMessage = decision.summary + '\n\nراجِع اسم الأداة والمدخلات، ثم اضغط «موافقة وتنفيذ» لبدء العملية.'
           setPending(decision)
-          setMessages(prev => [...prev, { role: 'assistant', content: decision.summary + '\n\nراجِع اسم الأداة والمدخلات، ثم اضغط «موافقة وتنفيذ» لبدء العملية.' }])
+          setMessages(prev => [...prev, { role: 'assistant', content: approvalMessage }])
+          await saveMessage('assistant', approvalMessage, activeConversationId)
         }
       } else if (decision?.type === 'message') {
         setMessages(prev => [...prev, { role: 'assistant', content: decision.content }])
+        await saveMessage('assistant', decision.content, activeConversationId)
       } else {
         setMessages(prev => [...prev, { role: 'assistant', content: raw }])
+        await saveMessage('assistant', raw, activeConversationId)
       }
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'تعذر إكمال الطلب: ' + (error instanceof Error ? error.message : 'خطأ غير معروف') }])
+      const reply = 'تعذر إكمال الطلب: ' + (error instanceof Error ? error.message : 'خطأ غير معروف')
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }])
+      try { await saveMessage('assistant', reply, activeConversationId) } catch { /* Keep the original provider error visible. */ }
     } finally { setSending(false) }
   }
 
@@ -102,7 +175,9 @@ export default function AgentChat({ provider, apiKey, model, onOpenSettings }: P
     try {
       const result = await clientRef.current.callTool({ name: pending.tool, arguments: pending.arguments })
       const output = JSON.stringify(result, null, 2)
-      setMessages(prev => [...prev, { role: 'assistant', content: 'نتيجة تنفيذ ' + pending.tool + ':\n' + output }])
+      const executionMessage = 'نتيجة تنفيذ ' + pending.tool + ':\n' + output
+      setMessages(prev => [...prev, { role: 'assistant', content: executionMessage }])
+      if (conversationId) await saveMessage('assistant', executionMessage, conversationId)
       setPending(null)
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'فشل تنفيذ أداة REA.')
@@ -113,14 +188,14 @@ export default function AgentChat({ provider, apiKey, model, onOpenSettings }: P
     <div className="panel agent-chat-panel">
       <div className="panel-heading agent-heading">
         <div><h3><Bot size={17}/> محادثة REA AI</h3><p>تحدث مع المساعد واطلب منه تحليل الأدوات وتنفيذ عمليات REA بعد موافقتك.</p></div>
-        <button className="button-secondary small" onClick={() => { setMessages([]); setPending(null); setStatus('تم بدء محادثة جديدة.') }}><Trash2 size={14}/> محادثة جديدة</button>
+        <button className="button-secondary small" onClick={() => { setMessages([]); setConversationId(null); setPending(null); setStatus('بدأت محادثة جديدة؛ ستُحفظ عند إرسال أول رسالة.') }}><Trash2 size={14}/> محادثة جديدة</button>
       </div>
       <div className="agent-status-row">
         <span className={connected ? 'agent-dot online' : 'agent-dot'}/><span>{connected ? `محرك REA متصل · ${tools.length} أداة` : 'محرك REA غير متصل'}</span>
         <button className="button-secondary small" onClick={() => void connectRea()} disabled={connecting}>{connecting ? <LoaderCircle className="spin" size={14}/> : <Plug size={14}/>} {connecting ? 'جارٍ الاتصال' : connected ? 'تحديث الأدوات' : 'اتصال REA'}</button>
       </div>
       <div className="agent-messages">
-        {messages.length === 0 && <div className="chat-empty"><div className="empty-icon"><Sparkles size={24}/></div><strong>ما الذي تريد تنفيذه؟</strong><span>اطلب شرح كود، تحليل بنية، إصلاح خطأ، أو تنفيذ إحدى أدوات REA المتاحة. سيطلب التطبيق موافقتك قبل تشغيل الأداة.</span></div>}
+        {historyLoading && <div className="chat-empty"><strong>جارٍ استرجاع المحادثة المحفوظة…</strong></div>}{!historyLoading && messages.length === 0 && <div className="chat-empty"><div className="empty-icon"><Sparkles size={24}/></div><strong>ما الذي تريد تنفيذه؟</strong><span>اطلب شرح كود، تحليل بنية، إصلاح خطأ، أو تنفيذ إحدى أدوات REA المتاحة. سيطلب التطبيق موافقتك قبل تشغيل الأداة.</span></div>}
         {messages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><div className="chat-message-label">{message.role === 'user' ? 'أنت' : 'REA AI'}</div><p>{message.content}</p></div>)}
         {sending && <div className="chat-message assistant"><div className="chat-message-label">REA AI</div><p className="typing">يفكر في طلبك...</p></div>}
         <div ref={bottomRef}/>

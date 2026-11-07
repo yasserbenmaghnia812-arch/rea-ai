@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ReaMcpPanel from './ReaMcpPanel'
 import AgentChat from './AgentChat'
-import { requestAiReply, type AiProvider, type ChatMessage } from './ai'
+import { type AiProvider } from './ai'
 import {
   Activity, ArrowDownLeft, ArrowUpLeft, Bell, Binary, Box, Check,
   ChevronDown, ChevronLeft, CircleHelp, Clock3, Code2, Command,
   Cpu, Database, FileArchive, FileCode2, FileSearch, FileUp, Folder,
   FolderOpen, GitBranch, HardDrive, LayoutDashboard, ListFilter,
   LockKeyhole, Menu, MoreHorizontal, Plus, Search, Settings2,
-  ShieldCheck, Sparkles, Bot, Send, UploadCloud, WandSparkles, X,
+  ShieldCheck, Sparkles, Bot, UploadCloud, WandSparkles, X,
   Zap, type LucideIcon
 } from 'lucide-react'
 
@@ -69,9 +69,6 @@ function App() {
   })
   const [aiKey, setAiKey] = useState('')
   const [aiModel, setAiModel] = useState(() => localStorage.getItem('rea-ai-model') || 'gemini-3.8-flash')
-  const [aiMessages, setAiMessages] = useState<ChatMessage[]>([])
-  const [aiPrompt, setAiPrompt] = useState('')
-  const [aiSending, setAiSending] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const current = pageTitles[page]
   const filtered = useMemo(() => projects.filter(p => p.name.toLowerCase().includes(query.toLowerCase())), [projects, query])
@@ -84,29 +81,6 @@ function App() {
     localStorage.setItem('rea-ai-provider', aiProvider)
     localStorage.setItem('rea-ai-model', aiModel)
   }, [aiProvider, aiModel])
-
-  async function sendAiMessage() {
-    const prompt = aiPrompt.trim()
-    if (!prompt || aiSending) return
-    if (!aiKey.trim()) {
-      setNotice('أدخل مفتاح API من صفحة الإعدادات أولاً.')
-      setPage('settings')
-      return
-    }
-    const nextMessages: ChatMessage[] = [...aiMessages, { role: 'user', content: prompt }]
-    setAiMessages(nextMessages)
-    setAiPrompt('')
-    setAiSending(true)
-    try {
-      const reply = await requestAiReply({ provider: aiProvider, apiKey: aiKey, model: aiModel, messages: nextMessages })
-      setAiMessages(prev => [...prev, { role: 'assistant', content: reply }])
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'تعذر الاتصال بمزوّد الذكاء الاصطناعي.'
-      setAiMessages(prev => [...prev, { role: 'assistant', content: `تعذر إكمال الطلب: ${message}` }])
-    } finally {
-      setAiSending(false)
-    }
-  }
 
   function addProject() {
     if (!projectName.trim()) return

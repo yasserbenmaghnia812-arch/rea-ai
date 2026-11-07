@@ -1,0 +1,166 @@
+name: Apply approved AI APK patches and rebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "One-hour signed URL for the original APK"
+        required: true
+        type: string
+      patch_url:
+        description: "One-hour signed URL for the approved patch manifest"
+        required: true
+        type: string
+      project_id:
+        description: "REA AI Studio project UUID"
+        required: true
+        type: string
+      original_filename:
+        description: "Original APK filename"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rea-ai-patch-${{ inputs.project_id }}
+  cancel-in-progress: false
+
+jobs:
+  patch-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Validate signed input URLs
+        shell: bash
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+          PATCH_URL: ${{ inputs.patch_url }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          ORIGINAL_FILENAME: ${{ inputs.original_filename }}
+        run: |
+          set -euo pipefail
+          [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "Invalid project UUID"; exit 1; }
+          [[ "$SOURCE_URL" == https://wrphphtelyuedntycbop.supabase.co/storage/v1/object/sign/apk-temp/* ]] || { echo "Original APK must come from private apk-temp"; exit 1; }
+          [[ "$PATCH_URL" == https://wrphphtelyuedntycbop.supabase.co/storage/v1/object/sign/apk-temp/* ]] || { echo "Patch manifest must come from private apk-temp"; exit 1; }
+          [[ "$(basename "$ORIGINAL_FILENAME")" == *.apk ]] || { echo "Only APK is supported"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Android build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0" "platforms;android-35"
+          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+
+      - name: Install Apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools output
+          curl -fsSL -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.2/apktool_3.0.2.jar
+          printf '#!/usr/bin/env bash\nexec java -jar "%s/tools/apktool.jar" "$@"\n' "$GITHUB_WORKSPACE" > tools/apktool
+          chmod +x tools/apktool
+          echo "$GITHUB_WORKSPACE/tools" >> "$GITHUB_PATH"
+
+      - name: Download APK and approved patch manifest
+        shell: bash
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+          PATCH_URL: ${{ inputs.patch_url }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 2 "$SOURCE_URL" -o input.apk
+          curl --fail --silent --show-error --location --retry 2 "$PATCH_URL" -o approved-patches.json
+          test -s input.apk
+          test -s approved-patches.json
+          test "$(wc -c < approved-patches.json)" -le 1048576 || { echo "Patch manifest exceeds 1MB"; exit 1; }
+
+      - name: Decode original APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/apktool d --force input.apk -o decoded
+
+      - name: Validate and apply approved patches
+        shell: bash
+        env:
+          PROJECT_ID: ${{ inputs.project_id }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
+          const manifest = JSON.parse(fs.readFileSync('approved-patches.json', 'utf8'));
+          if (manifest.version !== 1 || manifest.project_id !== process.env.PROJECT_ID ||
+              !Array.isArray(manifest.patches) || manifest.patches.length < 1 || manifest.patches.length > 5) {
+            throw new Error('Invalid patch manifest or project mismatch');
+          }
+          const root = path.resolve('decoded');
+          const report = [];
+          for (const patch of manifest.patches) {
+            if (!patch || typeof patch.path !== 'string' || typeof patch.content !== 'string' ||
+                typeof patch.expected_sha256 !== 'string') throw new Error('Malformed patch entry');
+            const normalized = patch.path.replaceAll('\\', '/');
+            const parts = normalized.split('/');
+            if (normalized.startsWith('/') || parts.some(p => !p || p === '.' || p === '..') ||
+                !/^(AndroidManifest\.xml|res\/.+\.xml|smali[^/]*\/.+\.smali)$/i.test(normalized)) {
+              throw new Error('Patch path outside allowed XML/SMALI scope: ' + normalized);
+            }
+            if (patch.content.length > 180000) throw new Error('Patch content exceeds 180KB');
+            const target = path.resolve(root, normalized);
+            if (!target.startsWith(root + path.sep)) throw new Error('Path traversal rejected');
+            const stat = fs.lstatSync(target);
+            if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Patch target must be a regular file');
+            const current = fs.readFileSync(target);
+            const actualHash = crypto.createHash('sha256').update(current).digest('hex');
+            if (actualHash !== patch.expected_sha256) throw new Error('Original file hash mismatch for ' + normalized + '; refusing stale patch');
+            fs.writeFileSync(target, patch.content, { encoding: 'utf8', flag: 'w' });
+            report.push({ path: normalized, previous_sha256: actualHash,
+              updated_sha256: crypto.createHash('sha256').update(patch.content).digest('hex'),
+              characters: patch.content.length });
+          }
+          fs.writeFileSync('output/PATCH-REPORT.json', JSON.stringify({
+            project_id: process.env.PROJECT_ID, approved_patch_count: report.length,
+            applied_at: new Date().toISOString(), patches: report
+          }, null, 2));
+          NODE
+
+      - name: Rebuild, align, and debug-sign patched APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/apktool b decoded -o output/rea-ai-patched-unsigned.apk
+          zipalign -f -v 4 output/rea-ai-patched-unsigned.apk output/rea-ai-patched-aligned.apk
+          keytool -genkeypair -v -keystore output/rea-debug.keystore -storepass android -keypass android -alias rea-debug -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=REA AI Studio, OU=Debug, O=REA, L=Algiers, C=DZ"
+          apksigner sign --ks output/rea-debug.keystore --ks-pass pass:android --key-pass pass:android --out output/rea-ai-patched-debug.apk output/rea-ai-patched-aligned.apk
+          apksigner verify --verbose output/rea-ai-patched-debug.apk
+          sha256sum output/rea-ai-patched-debug.apk > output/sha256.txt
+          cat > output/BUILD-INFO.txt <<'EOF'
+          This APK contains the exact user-approved XML/SMALI patch recorded in PATCH-REPORT.json.
+          It was rebuilt with Apktool and signed with an ephemeral debug keystore.
+          It is not a production signature. The original uploaded APK was never modified.
+          EOF
+
+      - name: Upload patched APK and report
+        uses: actions/upload-artifact@v4
+        with:
+          name: rea-ai-patched-apk-${{ inputs.project_id }}
+          path: |
+            output/rea-ai-patched-debug.apk
+            output/sha256.txt
+            output/PATCH-REPORT.json
+            output/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 7

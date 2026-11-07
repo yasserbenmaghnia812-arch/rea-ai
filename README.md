@@ -48,3 +48,17 @@ npm run build
 
 ## الترخيص
 واجهة REA AI Studio مستقلة. محرك REA الأصلي مرخّص وفق MIT؛ راجع مستودعه الرسمي وملفات الترخيص والإشعارات الخاصة به.
+
+
+## Supabase connection
+
+REA AI Studio uses the existing Supabase project for email/password authentication, project metadata, and private APK/ZIP uploads.
+
+Set these Vite variables in Vercel (Production, Preview, and Development), or copy `.env.example` to `.env.local` for local development:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+
+Only the Supabase publishable key is used in the browser. Do not add a `service_role` or secret key to Vite variables. Database and Storage access are restricted by Supabase RLS policies to the signed-in user's own records and files. The private `apk-temp` bucket currently limits each file to 100 MB.
+
+Uploaded files are stored securely and project metadata is persisted. This connection does not yet start APK decompilation or rebuild jobs; those execution workflows remain a separate implementation step.

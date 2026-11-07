@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { AlertTriangle, Bot, CheckCircle2, Circle, LoaderCircle, Plug, Send, ShieldCheck, Sparkles, Trash2, Wrench } from 'lucide-react'
+import { AlertTriangle, Bot, LoaderCircle, Plug, Send, ShieldCheck, Sparkles, Trash2, Wrench } from 'lucide-react'
 import { requestAiReply, type AiProvider, type ChatMessage } from './ai'
 
 type ToolInfo = { name: string; description?: string; inputSchema?: Record<string, unknown> }

@@ -78,3 +78,21 @@ The `workflow_dispatch` workflow is active on the default branch. The in-app run
 The Analysis page now offers a second GitHub Actions operation, **Rebuild and debug-sign APK**. It downloads the same private Supabase APK, decodes it with Apktool 3.0.2, rebuilds the decoded package, aligns it with Android build-tools, signs it with an ephemeral debug keystore, verifies the signature, and publishes the APK plus SHA-256 checksum as a seven-day GitHub Actions artifact.
 
 This is a pipeline validation and debug build, not an AI-modified release. No AI patch is applied yet. The debug keystore is generated for each run and is not retained; therefore this APK cannot update an installed app signed with another key and is not suitable for Play Store release. Production signing requires a user-owned release keystore kept in protected GitHub Actions secrets. The source APK is not modified.
+
+
+## AI-approved APK file patches
+
+The Analysis page includes an AI patch review flow for APKs:
+1. Run APK analysis and download the GitHub Actions artifact.
+2. Extract a text XML or SMALI file from the artifact's `apktool/` directory.
+3. Select that file in AI Patch Studio, enter its exact path relative to the decoded APK root, and describe the requested change.
+4. The configured Gemini, Groq, or OpenRouter model proposes a complete replacement file. The user reviews the proposal and must explicitly approve it before anything is applied.
+5. After approval, the app uploads a small patch manifest to the user's private Supabase `apk-temp` bucket and dispatches `.github/workflows/apply-ai-patches.yml`.
+6. The workflow decodes a fresh copy of the original APK, validates the target path and original file SHA-256, applies only the approved replacement, rebuilds with Apktool, zipaligns, debug-signs, verifies, and publishes a seven-day artifact.
+
+Security and scope:
+- Only existing `AndroidManifest.xml`, `res/**/*.xml`, and `smali*/**/*.smali` files can be replaced; no file creation or deletion is allowed.
+- The workflow rejects path traversal, unexpected file types, stale source hashes, and patch manifests for a different project.
+- The original uploaded APK is never modified. AI keys remain in browser memory; the GitHub token is held in component memory and requires Actions write permission.
+- JADX Java output is for reading/reference only; it is not compiled back into DEX by this workflow. Select XML/SMALI from Apktool output.
+- The result uses an ephemeral debug signing key and is not a Play Store release. A production signing flow requires a user-owned release keystore.

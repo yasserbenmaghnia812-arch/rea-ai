@@ -1,16 +1,17 @@
 import { useMemo, useRef, useState } from 'react'
 import ReaMcpPanel from './ReaMcpPanel'
+import { requestAiReply, type AiProvider, type ChatMessage } from './ai'
 import {
   Activity, ArrowDownLeft, ArrowUpLeft, Bell, Binary, Box, Check,
   ChevronDown, ChevronLeft, CircleHelp, Clock3, Code2, Command,
   Cpu, Database, FileArchive, FileCode2, FileSearch, FileUp, Folder,
   FolderOpen, GitBranch, HardDrive, LayoutDashboard, ListFilter,
   LockKeyhole, Menu, MoreHorizontal, Plus, Search, Settings2,
-  ShieldCheck, Sparkles, UploadCloud, WandSparkles, X,
+  ShieldCheck, Sparkles, Bot, Send, UploadCloud, WandSparkles, X,
   Zap, type LucideIcon
 } from 'lucide-react'
 
-type Page = 'overview' | 'projects' | 'analysis' | 'rebuild' | 'files' | 'activity' | 'settings'
+type Page = 'overview' | 'projects' | 'analysis' | 'rebuild' | 'files' | 'activity' | 'settings' | 'assistant'
 type Project = { id: number; name: string; kind: string; updated: string; status: 'جاهز' | 'قيد التحليل' | 'مسودة'; files: number }
 
 const initialProjects: Project[] = [
@@ -24,6 +25,7 @@ const navGroups: { label: string; items: { id: Page; label: string; icon: Lucide
     { id: 'overview', label: 'نظرة عامة', icon: LayoutDashboard },
     { id: 'projects', label: 'المشاريع', icon: Folder },
     { id: 'analysis', label: 'التحليل العكسي', icon: FileSearch },
+    { id: 'assistant', label: 'مساعد الذكاء الاصطناعي', icon: Bot },
     { id: 'rebuild', label: 'إعادة البناء', icon: WandSparkles },
     { id: 'files', label: 'الملفات والنتائج', icon: FileArchive },
   ]},
@@ -41,6 +43,7 @@ const pageTitles: Record<Page, { title: string; subtitle: string }> = {
   files: { title: 'الملفات والنتائج', subtitle: 'ملفات المصدر والمخرجات والتقارير المحفوظة.' },
   activity: { title: 'سجل العمليات', subtitle: 'تابع ما نفّذه النظام وما ينتظر المعالجة.' },
   settings: { title: 'الإعدادات', subtitle: 'إدارة مزوّد الذكاء الاصطناعي والاتصال والتفضيلات.' },
+  assistant: { title: 'مساعد الذكاء الاصطناعي', subtitle: 'ناقش نتائجك واطلب شرحاً أو خطة لإعادة بناء مشروعك.' },
 }
 
 function App() {
@@ -52,9 +55,38 @@ function App() {
   const [mobileNav, setMobileNav] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [notice, setNotice] = useState('')
+  const [aiProvider, setAiProvider] = useState<AiProvider>('gemini')
+  const [aiKey, setAiKey] = useState('')
+  const [aiModel, setAiModel] = useState('gemini-3.8-flash')
+  const [aiMessages, setAiMessages] = useState<ChatMessage[]>([])
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiSending, setAiSending] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const current = pageTitles[page]
   const filtered = useMemo(() => projects.filter(p => p.name.toLowerCase().includes(query.toLowerCase())), [projects, query])
+
+  async function sendAiMessage() {
+    const prompt = aiPrompt.trim()
+    if (!prompt || aiSending) return
+    if (!aiKey.trim()) {
+      setNotice('أدخل مفتاح API من صفحة الإعدادات أولاً.')
+      setPage('settings')
+      return
+    }
+    const nextMessages: ChatMessage[] = [...aiMessages, { role: 'user', content: prompt }]
+    setAiMessages(nextMessages)
+    setAiPrompt('')
+    setAiSending(true)
+    try {
+      const reply = await requestAiReply({ provider: aiProvider, apiKey: aiKey, model: aiModel, messages: nextMessages })
+      setAiMessages(prev => [...prev, { role: 'assistant', content: reply }])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'تعذر الاتصال بمزوّد الذكاء الاصطناعي.'
+      setAiMessages(prev => [...prev, { role: 'assistant', content: `تعذر إكمال الطلب: ${message}` }])
+    } finally {
+      setAiSending(false)
+    }
+  }
 
   function addProject() {
     if (!projectName.trim()) return
@@ -165,7 +197,10 @@ function App() {
 
           {page === 'activity' && <section className="panel page-panel"><div className="panel-heading"><div><h3>سجل النشاط</h3><p>تسلسل زمني لأحداث مساحة العمل</p></div><button className="button-secondary small"><ListFilter size={15}/> تصفية</button></div><div className="activity-list expanded"><ActivityItem icon={Check} tone="success" title="تم حفظ مشروع المتجر الذكي" time="منذ 12 دقيقة" desc="18 ملفاً · Android APK"/><ActivityItem icon={FileSearch} tone="blue" title="بدأ تحليل لوحة تحكم الويب" time="أمس، 21:40" desc="تحليل البنية والاعتماديات"/><ActivityItem icon={Folder} tone="neutral" title="تم إنشاء مكتبة النظام" time="منذ يومين" desc="مشروع جديد · Binary"/></div></section>}
 
-          {page === 'settings' && <section className="settings-grid"><div className="panel settings-panel"><div className="panel-heading"><div><h3>مزوّد الذكاء الاصطناعي</h3><p>إعداد الاتصال بالنموذج الذي سيحلّل النتائج</p></div><div className="panel-icon"><Sparkles size={17}/></div></div><label className="setting-label">المزوّد<select defaultValue="gemini"><option value="gemini">Google Gemini</option><option>Groq</option><option>OpenRouter</option><option>OpenAI compatible</option></select></label><label className="setting-label">مفتاح API<input type="password" placeholder="أضف المفتاح بعد تفعيل الخادم الآمن" disabled/></label><div className="notice-box"><LockKeyhole size={16}/><span>حقول المفاتيح معطّلة حالياً. سيتم حفظ الأسرار في الخادم فقط، وليس داخل المتصفح أو GitHub.</span></div><button className="button-primary" disabled>حفظ الإعدادات</button></div><div className="panel settings-panel"><div className="panel-heading"><div><h3>خدمة REA</h3><p>محرك التحليل العكسي الأساسي</p></div><div className="status-pill status-draft">غير موصول</div></div><div className="connection-row"><span>حالة MCP</span><strong>بانتظار إعداد نقطة الاتصال</strong></div><div className="connection-row"><span>مسار التنفيذ</span><strong dir="ltr">/mcp</strong></div><div className="connection-row"><span>نمط النقل</span><strong>Streamable HTTP</strong></div><button className="button-secondary full" disabled>اختبار الاتصال</button></div></section>}
+          {page === 'settings' && <section className="settings-grid"><div className="panel settings-panel"><div className="panel-heading"><div><h3>مزوّد الذكاء الاصطناعي</h3><p>أدخل مفتاحك لاستخدام المساعد مباشرة</p></div><div className="panel-icon"><Sparkles size={17}/></div></div><label className="setting-label">المزوّد<select value={aiProvider} onChange={e => { const value = e.target.value as AiProvider; setAiProvider(value); setAiModel(value === 'gemini' ? 'gemini-3.8-flash' : value === 'groq' ? 'llama-3.3-70b-versatile' : 'openrouter/auto') }}><option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="openrouter">OpenRouter</option></select></label><label className="setting-label">اسم النموذج<input value={aiModel} onChange={e => setAiModel(e.target.value)} placeholder="اسم النموذج من المزوّد" dir="ltr"/></label><label className="setting-label">مفتاح API<input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)} placeholder="ألصق مفتاح API هنا" dir="ltr" autoComplete="off"/></label><div className="notice-box"><LockKeyhole size={16}/><span>المفتاح يبقى في ذاكرة الصفحة فقط ولا يُحفظ في GitHub أو قاعدة بيانات. يُرسل مباشرة إلى مزوّدك من المتصفح، لذا لا تستخدم جهازاً عاماً.</span></div><button className="button-primary" onClick={() => setPage('assistant')} disabled={!aiKey.trim() || !aiModel.trim()}><Bot size={15}/> فتح المساعد</button></div><div className="panel settings-panel"><div className="panel-heading"><div><h3>خدمة REA</h3><p>محرك التحليل العكسي الأساسي</p></div><div className="status-pill status-running">MCP متاح للاتصال</div></div><div className="connection-row"><span>حالة MCP</span><strong>اختبر الاتصال من صفحة التحليل</strong></div><div className="connection-row"><span>مسار التطبيق</span><strong dir="ltr">/api/rea</strong></div><div className="connection-row"><span>النقل</span><strong>Streamable HTTP</strong></div><button className="button-secondary full" onClick={() => setPage('analysis')}>فتح لوحة REA</button></div></section>}
+
+          {page === 'assistant' && <section className="assistant-layout"><div className="panel assistant-chat"><div className="panel-heading"><div><h3>محادثة REA AI</h3><p>استخدم المساعد لشرح المخرجات والتخطيط لإعادة البناء</p></div><div className="panel-icon"><Bot size={18}/></div></div><div className="chat-messages">{aiMessages.length === 0 ? <div className="chat-empty"><div className="empty-icon"><Sparkles size={24}/></div><strong>ابدأ محادثة تقنية</strong><span>اسأل عن بنية التطبيق، نتائج التحليل، أو كيفية إعادة بناء ميزة معينة.</span></div> : aiMessages.map((message,index) => <div className={`chat-message ${message.role}`} key={index}><div className="chat-message-label">{message.role === 'user' ? 'أنت' : 'المساعد'}</div><p>{message.content}</p></div>)}{aiSending && <div className="chat-message assistant"><div className="chat-message-label">المساعد</div><p className="typing">جارٍ إعداد الإجابة...</p></div>}</div><div className="chat-compose"><textarea value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendAiMessage() } }} placeholder="اكتب سؤالك التقني هنا..." rows={2}/><button className="button-primary" onClick={() => void sendAiMessage()} disabled={aiSending || !aiPrompt.trim()}>{aiSending ? <Activity size={16}/> : <Send size={16}/>} إرسال</button></div></div><aside className="panel assistant-side"><h3>جلسة المساعد</h3><p>المزوّد الحالي</p><div className="connection-row"><span>الخدمة</span><strong>{aiProvider === 'gemini' ? 'Google Gemini' : aiProvider === 'groq' ? 'Groq' : 'OpenRouter'}</strong></div><div className="connection-row"><span>النموذج</span><strong dir="ltr">{aiModel}</strong></div><div className="assistant-tip"><ShieldCheck size={16}/> لم تُرفق ملفاتك تلقائياً بعد؛ أرسل النص أو تقرير REA داخل المحادثة كي يحلله المساعد.</div><button className="button-secondary full" onClick={() => setPage('settings')}>تغيير إعدادات API</button><button className="text-button clear-chat" onClick={() => setAiMessages([])}>مسح المحادثة الحالية</button></aside></section>}
+
           <footer className="footer"><span>REA AI STUDIO <b>·</b> BUILD 0.1.0</span><span>صُممت لتكون مساحة عملك للتحليل والبناء.</span></footer>
         </div>
       </main>

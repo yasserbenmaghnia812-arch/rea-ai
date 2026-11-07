@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/rea",
+      "destination": "https://rea-cloud-mcp-kj2f.onrender.com/mcp"
+    }
+  ]
+}

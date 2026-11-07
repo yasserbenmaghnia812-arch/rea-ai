@@ -63,9 +63,12 @@ function App() {
   const [mobileNav, setMobileNav] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [notice, setNotice] = useState('')
-  const [aiProvider, setAiProvider] = useState<AiProvider>('gemini')
+  const [aiProvider, setAiProvider] = useState<AiProvider>(() => {
+    const saved = localStorage.getItem('rea-ai-provider')
+    return saved === 'groq' || saved === 'openrouter' ? saved : 'gemini'
+  })
   const [aiKey, setAiKey] = useState('')
-  const [aiModel, setAiModel] = useState('gemini-3.8-flash')
+  const [aiModel, setAiModel] = useState(() => localStorage.getItem('rea-ai-model') || 'gemini-3.8-flash')
   const [aiMessages, setAiMessages] = useState<ChatMessage[]>([])
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiSending, setAiSending] = useState(false)
@@ -76,6 +79,11 @@ function App() {
   useEffect(() => {
     localStorage.setItem('rea-ai-projects', JSON.stringify(projects))
   }, [projects])
+
+  useEffect(() => {
+    localStorage.setItem('rea-ai-provider', aiProvider)
+    localStorage.setItem('rea-ai-model', aiModel)
+  }, [aiProvider, aiModel])
 
   async function sendAiMessage() {
     const prompt = aiPrompt.trim()

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { Activity, AlertTriangle, CheckCircle2, ChevronDown, Circle, LoaderCircle, Play, Plug, RefreshCw, TerminalSquare, Wrench } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle2, Circle, LoaderCircle, Play, Plug, RefreshCw, TerminalSquare, Wrench } from 'lucide-react'
 
 type ToolInfo = { name: string; description?: string; inputSchema?: Record<string, unknown> }
 

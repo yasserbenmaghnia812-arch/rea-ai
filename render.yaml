@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: replica-mcp-server
+    runtime: docker
+    plan: free
+    region: frankfurt
+    rootDir: replica-mcp
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: MCP_BEARER_TOKEN
+        generateValue: true
+      - key: WORKSPACE_ROOT
+        value: /tmp/replica-workspace

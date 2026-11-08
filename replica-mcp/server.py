@@ -447,7 +447,10 @@ class AuthAndHealth:
         if not valid and legacy:
             valid = hmac.compare_digest(supplied, "Bearer " + legacy)
         if not valid:
-            await self._json(send, {"error": "Unauthorized"}, 401)
+            code, body, response_headers = _json_response({"error": "Unauthorized"}, 401)
+            response_headers.append((b"www-authenticate",
+                f'Bearer resource_metadata="{OAUTH_ISSUER}/.well-known/oauth-protected-resource/mcp", scope="mcp"'.encode()))
+            await self._send(send, code, body, response_headers)
             return
         await self.app(scope, receive, send)
 

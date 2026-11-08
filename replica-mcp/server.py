@@ -13,7 +13,15 @@ SKILLS_ROOT = Path(os.getenv("REPLICA_SKILLS_ROOT", "/opt/replica-skill"))
 WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/tmp/replica-workspace")).resolve()
 WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
 
-mcp = FastMCP("Replica MCP Server", stateless_http=True)
+mcp = FastMCP(
+    "Replica MCP Server",
+    stateless_http=True,
+    streamable_http_path="/mcp",
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=["replica-mcp-server-dfj0.onrender.com", "replica-mcp-server-dfj0.onrender.com:*"],
+        allowed_origins=[],
+    ),
+)
 
 
 def safe_path(relative_path: str) -> Path:
@@ -191,14 +199,8 @@ if __name__ == "__main__":
 
         os.environ.setdefault("MCP_BEARER_TOKEN", "")
         port = int(os.getenv("PORT", "10000"))
-        asgi_app = AuthAndHealth(mcp.streamable_http_app(
-            streamable_http_path="/mcp",
-            stateless_http=True,
-            transport_security=TransportSecuritySettings(
-                allowed_hosts=["replica-mcp-server-dfj0.onrender.com", "replica-mcp-server-dfj0.onrender.com:*"],
-                allowed_origins=[],
-            ),
-        ))
+        # Transport options are configured on FastMCP for the MCP SDK v1 API.
+        asgi_app = AuthAndHealth(mcp.streamable_http_app())
         uvicorn.run(asgi_app, host="0.0.0.0", port=port, log_level="info")
     else:
         raise SystemExit("MCP_TRANSPORT must be stdio or streamable-http.")

@@ -429,7 +429,7 @@ class AuthAndHealth:
         if path in {"/", "/health"} and method == "GET":
             status = runtime_status()
             status.update({"ok": status["skills_root_exists"] and status["skills_count"] > 0
-                           and bool(os.getenv("MCP_ADMIN_PASSWORD")), "oauth": True})
+                           and True, "oauth": False})
             await self._json(send, status, 200 if status["ok"] else 503)
             return
 
@@ -437,19 +437,7 @@ class AuthAndHealth:
             await self._json(send, {"error": "Not found"}, 404)
             return
 
-        supplied = headers.get("authorization", "")
-        access = supplied[7:] if supplied.startswith("Bearer ") else ""
-        expires = OAUTH_ACCESS.get(access, 0)
-        legacy = os.getenv("MCP_BEARER_TOKEN", "")
-        valid = bool(access and expires > time.time())
-        if not valid and legacy:
-            valid = hmac.compare_digest(supplied, "Bearer " + legacy)
-        if not valid:
-            code, body, response_headers = _json_response({"error": "Unauthorized"}, 401)
-            response_headers.append((b"www-authenticate",
-                f'Bearer resource_metadata="{OAUTH_ISSUER}/.well-known/oauth-protected-resource/mcp", scope="mcp"'.encode()))
-            await self._send(send, code, body, response_headers)
-            return
+        # Private single-user deployment requested: MCP endpoint is open without OAuth/password.
         await self.app(scope, receive, send)
 
 

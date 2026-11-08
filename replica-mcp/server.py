@@ -182,9 +182,23 @@ class AuthAndHealth:
 
 
 if __name__ == "__main__":
-    import uvicorn
+    transport = os.getenv("MCP_TRANSPORT", "streamable-http").lower()
+    if transport == "stdio":
+        # Local desktop clients launch this process directly; stdio is the auth boundary.
+        mcp.run(transport="stdio")
+    elif transport in {"streamable-http", "http"}:
+        import uvicorn
 
-    os.environ.setdefault("MCP_BEARER_TOKEN", "")
-    port = int(os.getenv("PORT", "10000"))
-    asgi_app = AuthAndHealth(mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, transport_security=TransportSecuritySettings(allowed_hosts=["replica-mcp-server-dfj0.onrender.com", "replica-mcp-server-dfj0.onrender.com:*"], allowed_origins=[])))
-    uvicorn.run(asgi_app, host="0.0.0.0", port=port, log_level="info")
+        os.environ.setdefault("MCP_BEARER_TOKEN", "")
+        port = int(os.getenv("PORT", "10000"))
+        asgi_app = AuthAndHealth(mcp.streamable_http_app(
+            streamable_http_path="/mcp",
+            stateless_http=True,
+            transport_security=TransportSecuritySettings(
+                allowed_hosts=["replica-mcp-server-dfj0.onrender.com", "replica-mcp-server-dfj0.onrender.com:*"],
+                allowed_origins=[],
+            ),
+        ))
+        uvicorn.run(asgi_app, host="0.0.0.0", port=port, log_level="info")
+    else:
+        raise SystemExit("MCP_TRANSPORT must be stdio or streamable-http.")

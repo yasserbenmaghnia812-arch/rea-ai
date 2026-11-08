@@ -184,5 +184,8 @@ if __name__ == "__main__":
     import uvicorn
 
     os.environ.setdefault("MCP_BEARER_TOKEN", "")
-    asgi_app = AuthAndHealth(mcp.streamable_http_app(host="0.0.0.0", streamable_http_path="/mcp", stateless_http=True))
-    uvicorn.run(asgi_app, host="0.0.0.0", port=int(os.getenv("PORT", "10000")), log_level="info")
+    port = int(os.getenv("PORT", "10000"))
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = port
+    asgi_app = AuthAndHealth(mcp.streamable_http_app())
+    uvicorn.run(asgi_app, host="0.0.0.0", port=port, log_level="info")

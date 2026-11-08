@@ -239,7 +239,6 @@ async def _read_request_body(receive, limit: int = 65536) -> bytes:
         if not message.get("more_body", False):
             return bytes(chunks)
 
-
 class AuthAndHealth:
     def __init__(self, app):
         self.app = app
@@ -333,9 +332,8 @@ class AuthAndHealth:
                     or not p.get("code_challenge") or len(p["code_challenge"]) > 256):
                 await self._json(send, {"error": "invalid_request"}, 400)
                 return
-            tx = secrets.token_urlsafe(24)
-            cookie = secrets.token_urlsafe(24)
-            OAUTH_LOGIN_TX[tx] = {"params": p, "cookie": cookie, "created_at": time.time()}
+            tx = secrets.token_urlsafe(32)
+            OAUTH_LOGIN_TX[tx] = {"params": p, "created_at": time.time()}
             html = ("<!doctype html><html lang='en'><meta charset='utf-8'>"
                     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
                     "<title>Replica MCP sign in</title>"
@@ -350,7 +348,6 @@ class AuthAndHealth:
                     "<button type='submit'>Sign in and authorize</button></form></main></html>").encode()
             await self._send(send, 200, html, [
                 (b"content-type", b"text/html; charset=utf-8"),
-                (b"set-cookie", f"replica_oauth={cookie}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600".encode()),
                 (b"cache-control", b"no-store"),
             ])
             return
@@ -358,13 +355,15 @@ class AuthAndHealth:
         if path == "/authorize" and method == "POST":
             try:
                 form = dict(parse_qsl((await _read_request_body(receive)).decode(), keep_blank_values=True))
-                tx = OAUTH_LOGIN_TX.pop(form.get("tx", ""), None)
-                cookie = headers.get("cookie", "")
-                if not tx or f"replica_oauth={tx['cookie']}" not in cookie:
+                tx_id = form.get("tx", "")
+                tx = OAUTH_LOGIN_TX.get(tx_id)
+                if not tx or time.time() - tx.get("created_at", 0) > 600:
+                    OAUTH_LOGIN_TX.pop(tx_id, None)
                     raise ValueError("Login session expired; restart authorization")
                 password = os.getenv("MCP_ADMIN_PASSWORD", "")
                 if not password or not hmac.compare_digest(form.get("password", ""), password):
                     raise ValueError("Invalid administrator password")
+                OAUTH_LOGIN_TX.pop(tx_id, None)
                 p = tx["params"]
                 code = secrets.token_urlsafe(32)
                 OAUTH_CODES[code] = {
@@ -378,7 +377,6 @@ class AuthAndHealth:
                 redirect += urlencode({"code": code, **({"state": p["state"]} if p.get("state") else {})})
                 await self._send(send, 302, b"", [
                     (b"location", redirect.encode()),
-                    (b"set-cookie", b"replica_oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0"),
                     (b"cache-control", b"no-store"),
                 ])
             except Exception as exc:

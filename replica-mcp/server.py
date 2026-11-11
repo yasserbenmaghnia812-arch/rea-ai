@@ -437,7 +437,22 @@ class AuthAndHealth:
             await self._json(send, {"error": "Not found"}, 404)
             return
 
-        # Private single-user deployment requested: MCP endpoint is open without OAuth/password.
+        # Require a server-side bearer token for every MCP request. OAuth access
+        # tokens issued above are also accepted; the static token is for trusted
+        # service-to-service clients such as the Yasser Security Lab API.
+        bearer = headers.get("authorization", "")
+        configured_token = os.getenv("MCP_BEARER_TOKEN", "")
+        static_ok = bool(configured_token) and hmac.compare_digest(
+            bearer, "Bearer " + configured_token
+        )
+        oauth_token = bearer[7:] if bearer.startswith("Bearer ") else ""
+        oauth_ok = bool(oauth_token) and OAUTH_ACCESS.get(oauth_token, 0) > time.time()
+        if not (static_ok or oauth_ok):
+            status_code = 503 if not configured_token else 401
+            message = "MCP_BEARER_TOKEN is not configured." if status_code == 503 else "A valid Bearer token is required."
+            await self._json(send, {"error": message}, status_code)
+            return
+
         await self.app(scope, receive, send)
 
 

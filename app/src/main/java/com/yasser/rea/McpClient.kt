@@ -11,7 +11,9 @@ data class McpConnectionResult(
     val serverName: String,
     val protocolVersion: String,
     val tools: List<String>,
-    val sessionCreated: Boolean
+    val sessionCreated: Boolean,
+    val testToolName: String,
+    val testToolOutput: String
 )
 
 class McpClient {
@@ -22,8 +24,9 @@ class McpClient {
         .build()
 
     fun connect(endpoint: String, bearerToken: String = ""): McpConnectionResult {
-        val url = endpoint.trim().trimEnd('/')
-        require(url.startsWith("https://")) { "استخدم عنوان HTTPS لخادم MCP." }
+        val base = endpoint.trim().trimEnd('/')
+        require(base.startsWith("https://")) { "استخدم عنوان HTTPS لخادم MCP." }
+        val url = if (base.endsWith("/mcp")) base else "$base/mcp"
 
         val initialize = JSONObject()
             .put("jsonrpc", "2.0")
@@ -63,7 +66,48 @@ class McpClient {
                 if (name.isNotBlank()) add(name)
             }
         }
-        return McpConnectionResult(server, protocol, names, !sessionId.isNullOrBlank())
+
+        val lower = (server + " " + url).lowercase()
+        val candidate = when {
+            lower.contains("replica") -> "replica_server_info"
+            lower.contains("ecc") -> "ecc_server_info"
+            else -> ""
+        }
+        var testOutput = ""
+        var testedTool = ""
+        if (candidate.isNotBlank() && names.contains(candidate)) {
+            val call = JSONObject()
+                .put("jsonrpc", "2.0")
+                .put("id", 3)
+                .put("method", "tools/call")
+                .put("params", JSONObject()
+                    .put("name", candidate)
+                    .put("arguments", JSONObject()))
+            val called = post(url, call, bearerToken, sessionId).first
+            val callResult = called.optJSONObject("result")
+                ?: throw IllegalStateException(errorMessage(called, "لم يرجع الخادم نتيجة tools/call."))
+            if (callResult.optBoolean("isError")) {
+                throw IllegalStateException(extractToolText(callResult).ifBlank { "أداة الاختبار أعادت isError=true." })
+            }
+            testOutput = extractToolText(callResult)
+            testedTool = candidate
+        } else if (candidate.isNotBlank()) {
+            throw IllegalStateException("الخادم لم يعلن أداة الاختبار الآمنة المطلوبة: $candidate")
+        }
+
+        return McpConnectionResult(server, protocol, names, !sessionId.isNullOrBlank(), testedTool, testOutput)
+    }
+
+    private fun extractToolText(result: JSONObject): String {
+        result.optJSONObject("structuredContent")?.let { return it.toString() }
+        val content = result.optJSONArray("content") ?: return result.toString()
+        return buildList {
+            for (i in 0 until content.length()) {
+                val item = content.optJSONObject(i) ?: continue
+                val text = item.optString("text")
+                if (text.isNotBlank()) add(text)
+            }
+        }.joinToString("\n").ifBlank { result.toString() }
     }
 
     private fun post(

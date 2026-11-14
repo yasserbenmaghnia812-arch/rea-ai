@@ -58,12 +58,9 @@ function App() {
   const [mobileNav, setMobileNav] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [notice, setNotice] = useState('')
-  const [aiProvider, setAiProvider] = useState<AiProvider>(() => {
-    const saved = localStorage.getItem('rea-ai-provider')
-    return saved === 'gemini' || saved === 'groq' || saved === 'openrouter' ? saved : 'local'
-  })
+  const [aiProvider, setAiProvider] = useState<AiProvider>('local')
   const [aiKey, setAiKey] = useState('')
-  const [aiModel, setAiModel] = useState(() => localStorage.getItem('rea-ai-model') || 'onnx-community/Qwen2.5-0.5B-Instruct')
+  const [aiModel, setAiModel] = useState('onnx-community/Qwen2.5-0.5B-Instruct')
   const fileInput = useRef<HTMLInputElement>(null)
   const current = pageTitles[page]
   const filtered = useMemo(() => projects.filter(p => p.name.toLowerCase().includes(query.toLowerCase())), [projects, query])

@@ -11,6 +11,7 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 data class McpTool(val name: String, val description: String, val inputSchema: JSONObject)
+private data class McpResponse(val body: JSONObject, val sessionId: String?)
 
 class McpClient {
     private val http = OkHttpClient.Builder()
@@ -22,7 +23,7 @@ class McpClient {
     suspend fun listTools(endpoint: String, token: String): List<McpTool> = withContext(Dispatchers.IO) {
         val session = initialize(endpoint, token)
         val response = post(endpoint, token, session, JSONObject()
-            .put("jsonrpc", "2.0").put("id", 2).put("method", "tools/list").put("params", JSONObject()))
+            .put("jsonrpc", "2.0").put("id", 2).put("method", "tools/list").put("params", JSONObject())).body
         val result = response.optJSONObject("result") ?: error(response.optJSONObject("error")?.toString() ?: "Invalid MCP tools/list response")
         val array = result.optJSONArray("tools") ?: JSONArray()
         buildList {
@@ -37,7 +38,7 @@ class McpClient {
         val session = initialize(endpoint, token)
         val response = post(endpoint, token, session, JSONObject()
             .put("jsonrpc", "2.0").put("id", 3).put("method", "tools/call")
-            .put("params", JSONObject().put("name", name).put("arguments", JSONObject())))
+            .put("params", JSONObject().put("name", name).put("arguments", JSONObject()))).body
         response.optJSONObject("result")?.toString() ?: response.optJSONObject("error")?.toString() ?: response.toString()
     }
 
@@ -48,12 +49,14 @@ class McpClient {
                 .put("protocolVersion", "2025-03-26")
                 .put("capabilities", JSONObject())
                 .put("clientInfo", JSONObject().put("name", "REA-Console-Android").put("version", "0.1.0")))
-        val response = post(endpoint, token, null, body)
-        if (response.has("error")) error(response.getJSONObject("error").toString())
-        return response.optJSONObject("result")?.optString("protocolVersion")
+        val initialized = post(endpoint, token, null, body)
+        if (initialized.body.has("error")) error(initialized.body.getJSONObject("error").toString())
+        post(endpoint, token, initialized.sessionId, JSONObject()
+            .put("jsonrpc", "2.0").put("method", "notifications/initialized"))
+        return initialized.sessionId
     }
 
-    private fun post(endpoint: String, token: String, session: String?, payload: JSONObject): JSONObject {
+    private fun post(endpoint: String, token: String, session: String?, payload: JSONObject): McpResponse {
         val builder = Request.Builder().url(endpoint).post(payload.toString().toRequestBody(jsonType))
             .header("Accept", "application/json, text/event-stream")
             .header("MCP-Protocol-Version", "2025-03-26")
@@ -63,7 +66,8 @@ class McpClient {
             if (!response.isSuccessful) error("HTTP ${response.code}: ${response.body?.string().orEmpty()}")
             val raw = response.body?.string().orEmpty()
             val dataLine = raw.lineSequence().firstOrNull { it.startsWith("data:") }?.removePrefix("data:")?.trim()
-            return JSONObject(dataLine ?: raw)
+            val parsed = if (dataLine.isNullOrBlank() && raw.isBlank()) JSONObject() else JSONObject(dataLine ?: raw)
+            return McpResponse(parsed, response.header("MCP-Session-Id") ?: session)
         }
     }
 }

@@ -34,11 +34,11 @@ class McpClient {
         }
     }
 
-    suspend fun callTool(endpoint: String, token: String, name: String): String = withContext(Dispatchers.IO) {
+    suspend fun callTool(endpoint: String, token: String, name: String, arguments: JSONObject): String = withContext(Dispatchers.IO) {
         val session = initialize(endpoint, token)
         val response = post(endpoint, token, session, JSONObject()
             .put("jsonrpc", "2.0").put("id", 3).put("method", "tools/call")
-            .put("params", JSONObject().put("name", name).put("arguments", JSONObject()))).body
+            .put("params", JSONObject().put("name", name).put("arguments", arguments))).body
         response.optJSONObject("result")?.toString() ?: response.optJSONObject("error")?.toString() ?: response.toString()
     }
 

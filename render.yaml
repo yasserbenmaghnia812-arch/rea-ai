@@ -30,3 +30,17 @@ services:
         generateValue: true
       - key: ECC_ROOT
         value: /opt/ecc
+
+  - type: web
+    name: rea-cloud-mcp-unified
+    runtime: docker
+    plan: free
+    region: frankfurt
+    rootDir: cloud-mcp
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: MCP_BEARER_TOKEN
+        generateValue: true

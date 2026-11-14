@@ -230,9 +230,13 @@ private fun REAConsoleApp() {
                             val answerIndex = messages.lastIndex
                             scope.launch {
                                 runCatching {
-                                    localEngine.generate(userPrompt, maxTokens = 128).collect { token ->
-                                        val updated = messages[answerIndex].text + token
-                                        messages[answerIndex] = ChatLine(updated, false)
+                                    withContext(Dispatchers.Default) {
+                                        localEngine.generate(userPrompt, maxTokens = 128).collect { token ->
+                                            withContext(Dispatchers.Main) {
+                                                val updated = messages[answerIndex].text + token
+                                                messages[answerIndex] = ChatLine(updated, false)
+                                            }
+                                        }
                                     }
                                 }.onFailure {
                                     messages[answerIndex] = ChatLine("خطأ في التوليد: ${it.message ?: "غير معروف"}", false)

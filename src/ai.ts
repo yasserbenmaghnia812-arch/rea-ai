@@ -1,4 +1,6 @@
-export type AiProvider = 'gemini' | 'groq' | 'openrouter'
+import { requestLocalReply } from './localAi'
+
+export type AiProvider = 'local' | 'gemini' | 'groq' | 'openrouter'
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
 export async function requestAiReply(input: {
@@ -6,8 +8,10 @@ export async function requestAiReply(input: {
   apiKey: string
   model: string
   messages: ChatMessage[]
+  onProgress?: (message: string) => void
 }): Promise<string> {
-  const { provider, apiKey, model, messages } = input
+  const { provider, apiKey, model, messages, onProgress } = input
+  if (provider === 'local') return requestLocalReply(messages, model, onProgress)
   if (!apiKey.trim()) throw new Error('أدخل مفتاح API أولاً.')
   if (!model.trim()) throw new Error('أدخل اسم النموذج.')
 

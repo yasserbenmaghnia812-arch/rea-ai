@@ -102,7 +102,7 @@ export default function ReaMcpPanel() {
       </>}
       {output && <div className="mcp-output"><div><TerminalSquare size={14}/> نتيجة التنفيذ</div><pre dir="auto">{output}</pre></div>}
       {!connected && !error && <div className="mcp-idle"><Activity size={16}/> اضغط «اتصال بـ REA» لاكتشاف الأدوات المتاحة من الخادم.</div>}
-      <div className="mcp-foot"><AlertTriangle size={13}/> الخادم العام الحالي بلا مصادقة؛ لا تستخدمه مع ملفات أو بيانات حساسة.</div>
+      <div className="mcp-foot"><AlertTriangle size={13}/> اتصال REA محمي؛ رمز المصادقة محفوظ على الخادم ولا يصل إلى المتصفح.</div>
     </section>
   )
 }

@@ -79,7 +79,7 @@ object LocalModelManager {
 }
 
 class LocalModelEngine(context: Context) {
-    private val engine: InferenceEngine = AiChat.getInferenceEngine(context.applicationContext)
+    private val engine: InferenceEngine by lazy { AiChat.getInferenceEngine(context.applicationContext) }
 
     suspend fun load(file: File) = withContext(Dispatchers.Default) {
         engine.loadModel(file.absolutePath)

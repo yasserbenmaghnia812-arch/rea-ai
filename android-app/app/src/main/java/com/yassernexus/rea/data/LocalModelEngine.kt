@@ -79,7 +79,9 @@ object LocalModelManager {
 }
 
 class LocalModelEngine(context: Context) {
-    private val engine: InferenceEngine by lazy { AiChat.getInferenceEngine(context.applicationContext) }
+    private var instance: InferenceEngine? = null
+    private val engine: InferenceEngine
+        get() = instance ?: AiChat.getInferenceEngine(context.applicationContext).also { instance = it }
 
     suspend fun load(file: File) = withContext(Dispatchers.Default) {
         engine.loadModel(file.absolutePath)
@@ -93,6 +95,7 @@ class LocalModelEngine(context: Context) {
         engine.sendUserPrompt(prompt, predictLength = maxTokens)
 
     fun close() {
-        engine.destroy()
+        instance?.destroy()
+        instance = null
     }
 }

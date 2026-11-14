@@ -54,6 +54,7 @@ private fun ReaApp() {
     var eccUrl by remember { mutableStateOf("https://yasser-ecc-mcp-m8ia.onrender.com") }
     var bearer by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("لم يتم اختبار اتصال MCP بعد") }
+    var mcpTestOutput by remember { mutableStateOf("لم يتم تنفيذ اختبار أداة MCP بعد") }
     var selectedServer by remember { mutableStateOf("REA Cloud MCP") }
     var busy by remember { mutableStateOf(false) }
     var tools by remember { mutableStateOf(emptyList<String>()) }
@@ -136,6 +137,7 @@ private fun ReaApp() {
                         StatusCard("حالة MCP", status)
                         StatusCard("الخادم المختار", selectedServer)
                         StatusCard("نتيجة الفحص", serverInfo.ifBlank { "لم يتم إجراء handshake بعد" })
+                        StatusCard("نتيجة tools/call", mcpTestOutput)
                         Text("استدلال محلي داخل Android عبر llama.cpp؛ لا يعتمد على WebView أو API عند تشغيل النموذج.", color = Color.LightGray, fontSize = 13.sp)
                         Button(
                             onClick = {
@@ -271,19 +273,22 @@ private fun ReaApp() {
                             onClick = {
                                 if (!busy) {
                                     busy = true
-                                    status = "جارٍ تنفيذ MCP initialize و tools/list..."
+                                    status = "جارٍ تنفيذ initialize و tools/list واختبار أداة قراءة آمنة..."
+                                    mcpTestOutput = "الاختبار قيد التنفيذ..."
                                     tools = emptyList()
                                     scope.launch {
                                         try {
                                             val result = withContext(Dispatchers.IO) {
                                                 McpClient().connect(activeUrl, bearer)
                                             }
-                                            status = "اتصال MCP ناجح"
-                                            serverInfo = "${result.serverName} • protocol ${result.protocolVersion} • session ${if(result.sessionCreated) "موجودة" else "غير موجودة"}"
+                                            status = if (result.testToolName.isNotBlank()) "نجح handshake و tools/list و tools/call" else "نجح handshake و tools/list فقط"
+                                            serverInfo = "${result.serverName} • protocol ${result.protocolVersion} • session ${if(result.sessionCreated) "موجودة" else "stateless"}"
+                                            mcpTestOutput = if (result.testToolName.isNotBlank()) "${result.testToolName}\n${result.testToolOutput}" else "لم تُنفذ أداة اختبار لهذا الخادم."
                                             tools = result.tools
                                         } catch (e: Exception) {
-                                            status = "فشل اتصال MCP: ${e.message ?: "خطأ غير معروف"}"
-                                            serverInfo = "لم يكتمل handshake"
+                                            status = "فشل اختبار MCP: ${e.message ?: "خطأ غير معروف"}"
+                                            mcpTestOutput = "لم يكتمل اختبار الأداة الآمنة."
+                                            serverInfo = "لم يكتمل handshake / tools/call"
                                         } finally {
                                             busy = false
                                         }
@@ -304,7 +309,7 @@ private fun ReaApp() {
                         } else if (!busy && status.startsWith("اتصال MCP ناجح")) {
                             Text("اكتمل الاتصال، لكن الخادم لم يعلن أدوات.", color = Color.LightGray)
                         }
-                        Text("هذه المرحلة تكتشف الأدوات فقط؛ لا تنفذها تلقائياً.", color = Color(0xFFFFC66D), fontSize = 12.sp)
+                        Text("Replica وECC: ينفذ الاختبار أداة معلومات read-only فقط؛ لا يكتب ملفات ولا يشغّل أوامر.", color = Color(0xFFFFC66D), fontSize = 12.sp)
                     }
                     else -> {
                         Text("مزود الذكاء الاصطناعي", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)

@@ -4,10 +4,10 @@ This repository combines original YASSER AI Studio code with separately licensed
 
 | Component | Upstream | License / use |
 |---|---|---|
-| REA MCP tooling | https://github.com/morluto/rea | MIT; used by the existing REA integration |
-| ECC skills and agent assets | https://github.com/affaan-m/ECC | MIT; indexed by the read-only ECC MCP service |
-| Replica skills | https://github.com/Jakeschincariol/replica-skill | MIT; installed by the existing Replica MCP service |
-| Qwen2.5 0.5B Instruct ONNX model | https://huggingface.co/onnx-community/Qwen2.5-0.5B-Instruct | Model weights are distributed separately under their upstream model license; review the model card before redistribution |
-| Transformers.js | https://github.com/huggingface/transformers.js | Apache-2.0 |
+| REA MCP tooling | https://github.com/morluto/rea | MIT; used by the REA integration |
+| ECC skills and agent assets | https://github.com/affaan-m/ECC | MIT; used by the ECC MCP service |
+| Replica skills | https://github.com/Jakeschincariol/replica-skill | MIT; used by the Replica MCP service |
+| llama.cpp Android inference runtime | https://github.com/ggml-org/llama.cpp | MIT; checked out at a pinned revision during Android builds |
+| Qwen2.5-0.5B-Instruct GGUF Q4_K_M model | https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF | The upstream Qwen2.5 model is licensed under Apache-2.0; the GGUF weights are downloaded separately by the user |
 
-The root MIT license applies to the original code in this repository. It does not replace or override upstream licenses for third-party code, skills, or model weights.
+The root MIT license applies to original code in this repository. It does not replace or override upstream licenses for third-party code, skills, or model weights. The Qwen model is not bundled in the APK.

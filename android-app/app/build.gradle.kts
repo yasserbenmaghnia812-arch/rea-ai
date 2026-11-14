@@ -10,10 +10,10 @@ android {
 
     defaultConfig {
         applicationId = "com.yassernexus.rea"
-        minSdk = 26
+        minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildTypes {
@@ -32,6 +32,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":llama"))
     val composeBom = platform("androidx.compose:compose-bom:2025.10.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)

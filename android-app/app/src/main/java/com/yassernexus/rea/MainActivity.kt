@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import com.yassernexus.rea.data.McpClient
 import com.yassernexus.rea.data.McpTool
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,6 +61,7 @@ private fun REAConsoleApp() {
     var showSettings by remember { mutableStateOf(false) }
     var showApproval by remember { mutableStateOf(false) }
     var pendingTool by remember { mutableStateOf<McpTool?>(null) }
+    var toolArguments by remember { mutableStateOf("{}") }
     var tools by remember { mutableStateOf<List<McpTool>>(emptyList()) }
     var status by remember { mutableStateOf("غير متصل") }
     var busy by remember { mutableStateOf(false) }
@@ -116,7 +119,7 @@ private fun REAConsoleApp() {
                                     Text(tool.name, style = MaterialTheme.typography.titleSmall)
                                     Text(tool.description.ifBlank { "لا يوجد وصف" }, style = MaterialTheme.typography.bodySmall)
                                 }
-                                Button(onClick = { pendingTool = tool; showApproval = true }) { Text("طلب تنفيذ") }
+                                Button(onClick = { pendingTool = tool; toolArguments = "{}"; showApproval = true }) { Text("طلب تنفيذ") }
                             }
                         }
                     }
@@ -184,15 +187,39 @@ private fun REAConsoleApp() {
         AlertDialog(
             onDismissRequest = { showApproval = false; pendingTool = null },
             title = { Text("تأكيد تنفيذ الأداة") },
-            text = { Text("هل توافق على استدعاء «${tool.name}» الآن؟ لن يتم التنفيذ قبل ضغطك على موافقة.") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("راجع الوسيطات قبل التنفيذ. لن يتم إرسال الطلب قبل موافقتك.")
+                    OutlinedTextField(
+                        value = toolArguments,
+                        onValueChange = { toolArguments = it },
+                        label = { Text("وسيطات الأداة بصيغة JSON") },
+                        minLines = 3,
+                        maxLines = 6
+                    )
+                    Text("الحقول المطلوبة: " + (tool.inputSchema.optJSONArray("required")?.let { arr -> (0 until arr.length()).joinToString(", ") { arr.getString(it) } } ?: "لا توجد"), style = MaterialTheme.typography.bodySmall)
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     showApproval = false
                     val server = servers[selectedServer]
+                    val parsedArguments = runCatching { JSONObject(toolArguments) }.getOrElse {
+                        error = "صيغة JSON غير صحيحة"
+                        pendingTool = null
+                        return@TextButton
+                    }
+                    val required = tool.inputSchema.optJSONArray("required") ?: JSONArray()
+                    val missing = (0 until required.length()).map { required.getString(it) }.filterNot(parsedArguments::has)
+                    if (missing.isNotEmpty()) {
+                        error = "حقول مطلوبة ناقصة: " + missing.joinToString(", ")
+                        pendingTool = null
+                        return@TextButton
+                    }
                     busy = true
                     scope.launch {
-                        runCatching { client.callTool(server.endpoint, server.token, tool.name) }
-                            .onSuccess { messages.add(ChatLine("نتيجة ${tool.name}: $it", false)) }
+                        runCatching { client.callTool(server.endpoint, server.token, tool.name, parsedArguments) }
+                            .onSuccess { messages.add(ChatLine("نتيجة " + tool.name + ": " + it, false)) }
                             .onFailure { error = it.message ?: "فشل تنفيذ الأداة" }
                         busy = false
                         pendingTool = null

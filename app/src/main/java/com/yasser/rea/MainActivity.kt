@@ -17,11 +17,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.arm.aichat.AiChat
+import com.arm.aichat.InferenceEngine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -40,6 +44,8 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun ReaApp() {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
     var selected by remember { mutableStateOf("الرئيسية") }
     var prompt by remember { mutableStateOf("") }
     var cloudUrl by remember { mutableStateOf("https://rea-cloud-mcp-unified.onrender.com") }
@@ -51,8 +57,32 @@ private fun ReaApp() {
     var busy by remember { mutableStateOf(false) }
     var tools by remember { mutableStateOf(emptyList<String>()) }
     var serverInfo by remember { mutableStateOf("") }
-    val messages = remember { mutableStateListOf("واجهة REA الأصلية جاهزة. اتصال الذكاء الاصطناعي لم يُفعّل بعد.") }
-    val scope = rememberCoroutineScope()
+    var localEngine by remember { mutableStateOf<InferenceEngine?>(null) }
+    var localReady by remember { mutableStateOf(false) }
+    var modelBusy by remember { mutableStateOf(false) }
+    var localStatus by remember { mutableStateOf("النموذج المحلي لم يتم تحميله بعد") }
+    val messages = remember {
+        mutableStateListOf("واجهة REA الأصلية جاهزة. حمّل النموذج المحلي لتفعيل المحادثة دون اتصال.")
+    }
+
+    LaunchedEffect(context) {
+        try {
+            val engine = withContext(Dispatchers.IO) { AiChat.getInferenceEngine(context) }
+            localEngine = engine
+            val initialState = engine.state.first {
+                it == InferenceEngine.State.Initialized || it is InferenceEngine.State.Error
+            }
+            if (initialState is InferenceEngine.State.Error) {
+                localStatus = "تعذر تهيئة محرك النموذج: ${initialState.exception.message}"
+            } else {
+                localStatus = "محرك llama.cpp الأصلي جاهز؛ النموذج يحتاج إلى تنزيل وتحميل."
+            }
+        } catch (e: Exception) {
+            localStatus = "فشل تهيئة المحرك المحلي: ${e.message ?: "خطأ غير معروف"}"
+        } catch (e: UnsatisfiedLinkError) {
+            localStatus = "تعذر تحميل مكتبة الاستدلال الأصلية: ${e.message}"
+        }
+    }
 
     val servers = listOf(
         McpServer("REA Cloud MCP", cloudUrl),
@@ -94,11 +124,53 @@ private fun ReaApp() {
                 }
                 when(selected) {
                     "الرئيسية" -> {
+                        StatusCard("حالة النموذج المحلي", localStatus)
                         StatusCard("حالة MCP", status)
                         StatusCard("الخادم المختار", selectedServer)
                         StatusCard("نتيجة الفحص", serverInfo.ifBlank { "لم يتم إجراء handshake بعد" })
-                        StatusCard("المعمارية", "Kotlin • Jetpack Compose • Android API 26+")
-                        Text("تطبيق Android أصلي؛ لا يستخدم WebView.", color = Color.LightGray, fontSize = 13.sp)
+                        Text("استدلال محلي داخل Android عبر llama.cpp؛ لا يعتمد على WebView أو API عند تشغيل النموذج.", color = Color.LightGray, fontSize = 13.sp)
+                        Button(
+                            onClick = {
+                                if (!modelBusy && !localReady) {
+                                    modelBusy = true
+                                    scope.launch {
+                                        try {
+                                            localStatus = "جارٍ التحقق من مساحة التخزين..."
+                                            val modelFile = LocalModelManager.ensureModel(context) { progress ->
+                                                withContext(Dispatchers.Main) { localStatus = progress }
+                                            }
+                                            val engine = localEngine ?: withContext(Dispatchers.IO) {
+                                                AiChat.getInferenceEngine(context)
+                                            }.also { localEngine = it }
+                                            val state = engine.state.first {
+                                                it == InferenceEngine.State.Initialized || it is InferenceEngine.State.Error
+                                            }
+                                            if (state is InferenceEngine.State.Error) throw state.exception
+                                            localStatus = "جارٍ تحميل النموذج في الذاكرة..."
+                                            withContext(Dispatchers.IO) {
+                                                engine.loadModel(modelFile.absolutePath)
+                                                engine.setSystemPrompt(
+                                                    "أنت REA AI، مساعد تقني دقيق. أجب باللغة العربية ما لم يطلب المستخدم لغة أخرى. كن واضحاً ولا تدّع تنفيذ شيء لم تنفذه."
+                                                )
+                                            }
+                                            localReady = true
+                                            localStatus = "النموذج Qwen2.5-0.5B محمّل وجاهز للاستدلال المحلي."
+                                        } catch (e: Exception) {
+                                            localStatus = "فشل تشغيل النموذج: ${e.message ?: "خطأ غير معروف"}"
+                                        } catch (e: UnsatisfiedLinkError) {
+                                            localStatus = "مكتبة llama.cpp غير متاحة: ${e.message}"
+                                        } finally {
+                                            modelBusy = false
+                                        }
+                                    }
+                                }
+                            },
+                            enabled = !modelBusy && !localReady,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (modelBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Text(if (localReady) "النموذج يعمل" else "تنزيل وتشغيل النموذج المحلي")
+                        }
                     }
                     "المحادثة" -> {
                         LazyColumn(
@@ -111,6 +183,11 @@ private fun ReaApp() {
                                 }
                             }
                         }
+                        Text(
+                            if (localReady) "المحادثة تعمل محلياً على الجهاز." else "حمّل النموذج من الصفحة الرئيسية قبل بدء المحادثة.",
+                            color = if (localReady) Accent else Color(0xFFFFC66D),
+                            fontSize = 12.sp
+                        )
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             BasicTextField(
                                 value = prompt,
@@ -122,13 +199,25 @@ private fun ReaApp() {
                                     inner()
                                 }
                             )
-                            Button(onClick = {
-                                if(prompt.isNotBlank()) {
-                                    messages.add("أنت: $prompt")
-                                    messages.add("لم يتم ربط مزود نموذج AI بعد. فحص MCP لا يعني أن المحادثة الذكية أصبحت متاحة.")
+                            Button(
+                                enabled = localReady && prompt.isNotBlank(),
+                                onClick = {
+                                    val userPrompt = prompt.trim()
                                     prompt = ""
+                                    messages.add("أنت: $userPrompt")
+                                    messages.add("REA: ")
+                                    val answerIndex = messages.lastIndex
+                                    scope.launch {
+                                        try {
+                                            localEngine?.sendUserPrompt(userPrompt, 128)?.collect { token ->
+                                                messages[answerIndex] = messages[answerIndex] + token
+                                            } ?: error("محرك النموذج غير متاح.")
+                                        } catch (e: Exception) {
+                                            messages[answerIndex] = "تعذر توليد الرد: ${e.message ?: "خطأ غير معروف"}"
+                                        }
+                                    }
                                 }
-                            }) { Icon(Icons.Default.Send, null) }
+                            ) { Icon(Icons.Default.Send, null) }
                         }
                     }
                     "الأدوات" -> {
@@ -139,10 +228,7 @@ private fun ReaApp() {
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier.fillMaxWidth().clickable { selectedServer = server.title }
                             ) {
-                                Row(
-                                    Modifier.padding(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+                                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Column(Modifier.weight(1f)) {
                                         Text(server.title, color = Accent, fontWeight = FontWeight.SemiBold)
                                         Text(server.url, color = Color.LightGray, fontSize = 10.sp)
@@ -204,6 +290,10 @@ private fun ReaApp() {
                             singleLine = true
                         )
                         Text("لا يُحفظ الرمز في الملفات أو التخزين الدائم. أدخله فقط إذا كان الخادم يتطلبه.", color = Color(0xFFFFC66D), fontSize = 12.sp)
+                        StatusCard("النموذج المحلي", "Qwen2.5-0.5B-Instruct Q4_0 • GGUF • تنزيل أول مرة نحو 429 MB")
+                        Button(onClick = { selected = "الرئيسية" }, modifier = Modifier.fillMaxWidth()) {
+                            Text("إعداد النموذج المحلي")
+                        }
                         Button(onClick = { selected = "الأدوات" }, modifier = Modifier.fillMaxWidth()) {
                             Text("الانتقال لاختبار MCP")
                         }

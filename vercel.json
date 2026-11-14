@@ -1,10 +1,6 @@
 {
   "rewrites": [
     {
-      "source": "/api/rea",
-      "destination": "https://rea-cloud-mcp-kj2f.onrender.com/mcp"
-    },
-    {
       "source": "/api/replica",
       "destination": "https://replica-mcp-server-dfj0.onrender.com/mcp"
     },

@@ -42,7 +42,7 @@ const pageTitles: Record<Page, { title: string; subtitle: string }> = {
   files: { title: 'الملفات والنتائج', subtitle: 'ملفات المصدر والمخرجات والتقارير المحفوظة.' },
   activity: { title: 'سجل العمليات', subtitle: 'تابع ما نفّذه النظام وما ينتظر المعالجة.' },
   settings: { title: 'الإعدادات', subtitle: 'إدارة مزوّد الذكاء الاصطناعي والاتصال والتفضيلات.' },
-  assistant: { title: 'مساعد الذكاء الاصطناعي', subtitle: 'ناقش نتائجك واطلب شرحاً أو خطة لإعادة بناء مشروعك.' },
+  assistant: { title: 'المساعد ومركز MCP', subtitle: 'نموذج محلي بلا مفتاح API، مع خوادم REA وReplica وECC في جلسة واحدة.' },
 }
 
 function App() {
@@ -60,10 +60,10 @@ function App() {
   const [notice, setNotice] = useState('')
   const [aiProvider, setAiProvider] = useState<AiProvider>(() => {
     const saved = localStorage.getItem('rea-ai-provider')
-    return saved === 'groq' || saved === 'openrouter' ? saved : 'gemini'
+    return saved === 'gemini' || saved === 'groq' || saved === 'openrouter' ? saved : 'local'
   })
   const [aiKey, setAiKey] = useState('')
-  const [aiModel, setAiModel] = useState(() => localStorage.getItem('rea-ai-model') || 'gemini-3.8-flash')
+  const [aiModel, setAiModel] = useState(() => localStorage.getItem('rea-ai-model') || 'onnx-community/Qwen2.5-0.5B-Instruct')
   const fileInput = useRef<HTMLInputElement>(null)
   const current = pageTitles[page]
   const filtered = useMemo(() => projects.filter(p => p.name.toLowerCase().includes(query.toLowerCase())), [projects, query])
@@ -286,7 +286,43 @@ function App() {
 
           {page === 'activity' && <section className="panel page-panel"><div className="panel-heading"><div><h3>سجل النشاط</h3><p>تسلسل زمني لأحداث مساحة العمل</p></div><button className="button-secondary small"><ListFilter size={15}/> تصفية</button></div><div className="activity-list expanded"><ActivityItem icon={Check} tone="success" title="تم حفظ مشروع المتجر الذكي" time="منذ 12 دقيقة" desc="18 ملفاً · Android APK"/><ActivityItem icon={FileSearch} tone="blue" title="بدأ تحليل لوحة تحكم الويب" time="أمس، 21:40" desc="تحليل البنية والاعتماديات"/><ActivityItem icon={Folder} tone="neutral" title="تم إنشاء مكتبة النظام" time="منذ يومين" desc="مشروع جديد · Binary"/></div></section>}
 
-          {page === 'settings' && <section className="settings-grid"><div className="panel settings-panel"><div className="panel-heading"><div><h3>مزوّد الذكاء الاصطناعي</h3><p>أدخل مفتاحك لاستخدام المساعد مباشرة</p></div><div className="panel-icon"><Sparkles size={17}/></div></div><label className="setting-label">المزوّد<select value={aiProvider} onChange={e => { const value = e.target.value as AiProvider; setAiProvider(value); setAiModel(value === 'gemini' ? 'gemini-3.8-flash' : value === 'groq' ? 'llama-3.3-70b-versatile' : 'openrouter/auto') }}><option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="openrouter">OpenRouter</option></select></label><label className="setting-label">اسم النموذج<input value={aiModel} onChange={e => setAiModel(e.target.value)} placeholder="اسم النموذج من المزوّد" dir="ltr"/></label><label className="setting-label">مفتاح API<input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)} placeholder="ألصق مفتاح API هنا" dir="ltr" autoComplete="off"/></label><div className="notice-box"><LockKeyhole size={16}/><span>المفتاح يبقى في ذاكرة الصفحة فقط ولا يُحفظ في GitHub أو قاعدة بيانات. يُرسل مباشرة إلى مزوّدك من المتصفح، لذا لا تستخدم جهازاً عاماً.</span></div><button className="button-primary" onClick={() => setPage('assistant')} disabled={!aiKey.trim() || !aiModel.trim()}><Bot size={15}/> فتح المساعد</button></div><div className="panel settings-panel"><div className="panel-heading"><div><h3>خدمة REA</h3><p>محرك التحليل العكسي الأساسي</p></div><div className="status-pill status-running">MCP متاح للاتصال</div></div><div className="connection-row"><span>حالة MCP</span><strong>اختبر الاتصال من صفحة التحليل</strong></div><div className="connection-row"><span>مسار التطبيق</span><strong dir="ltr">/api/rea</strong></div><div className="connection-row"><span>النقل</span><strong>Streamable HTTP</strong></div><button className="button-secondary full" onClick={() => setPage('analysis')}>فتح لوحة REA</button></div></section>}
+          {page === 'settings' && <section className="settings-grid">
+            <div className="panel settings-panel">
+              <div className="panel-heading"><div><h3>مزوّد الذكاء الاصطناعي</h3><p>ابدأ بالنموذج المحلي دون مفتاح API أو استخدم مزوّداً خارجياً.</p></div><div className="panel-icon"><Sparkles size={17}/></div></div>
+              <label className="setting-label">المزوّد
+                <select value={aiProvider} onChange={e => {
+                  const value = e.target.value as AiProvider
+                  setAiProvider(value)
+                  setAiModel(value === 'local' ? 'onnx-community/Qwen2.5-0.5B-Instruct' : value === 'gemini' ? 'gemini-3.8-flash' : value === 'groq' ? 'llama-3.3-70b-versatile' : 'openrouter/auto')
+                }}>
+                  <option value="local">محلي على الجهاز — بلا API</option>
+                  <option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="openrouter">OpenRouter</option>
+                </select>
+              </label>
+              {aiProvider === 'local' ? <>
+                <label className="setting-label">النموذج المحلي
+                  <select value={aiModel} onChange={e => setAiModel(e.target.value)}>
+                    <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B — متعدد اللغات (تنزيل كبير)</option>
+                    <option value="onnx-community/SmolLM2-135M-Instruct-ONNX">SmolLM2 135M — أخف، العربية محدودة</option>
+                  </select>
+                </label>
+                <div className="notice-box"><Cpu size={16}/><span>التشغيل داخل المتصفح عبر WebGPU أو WASM؛ أول تشغيل ينزّل ملفات النموذج ويخزنها مؤقتاً. نموذج Qwen قد يحتاج نحو 786MB للتنزيل وقد يكون ثقيلاً على الهاتف. لا يغادر نص المحادثة الجهاز عند استخدام الوضع المحلي.</span></div>
+              </> : <>
+                <label className="setting-label">اسم النموذج<input value={aiModel} onChange={e => setAiModel(e.target.value)} placeholder="اسم النموذج من المزوّد" dir="ltr"/></label>
+                <label className="setting-label">مفتاح API<input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)} placeholder="ألصق مفتاح API هنا" dir="ltr" autoComplete="off"/></label>
+                <div className="notice-box"><LockKeyhole size={16}/><span>المفتاح يبقى في ذاكرة الصفحة فقط ولا يُحفظ في GitHub أو قاعدة البيانات. يُرسل مباشرة إلى المزوّد الذي اخترته.</span></div>
+              </>}
+              <button className="button-primary" onClick={() => setPage('assistant')} disabled={!aiModel.trim() || (aiProvider !== 'local' && !aiKey.trim())}><Bot size={15}/> فتح المساعد</button>
+            </div>
+            <div className="panel settings-panel">
+              <div className="panel-heading"><div><h3>خوادم MCP المتاحة</h3><p>الربط النهائي واختبار الحالة من مركز MCP داخل صفحة المساعد.</p></div><div className="status-pill status-running">3 خوادم</div></div>
+              <div className="connection-row"><span>REA</span><strong dir="ltr">/api/rea</strong></div>
+              <div className="connection-row"><span>Replica</span><strong dir="ltr">/api/replica</strong></div>
+              <div className="connection-row"><span>ECC</span><strong dir="ltr">/api/ecc</strong></div>
+              <div className="notice-box"><ShieldCheck size={16}/><span>Replica وECC يتطلبان Bearer Token من إعدادات الاستضافة. أدخله داخل مركز MCP؛ لا يُحفظ في التخزين المحلي.</span></div>
+              <button className="button-secondary full" onClick={() => setPage('assistant')}>فتح مركز MCP</button>
+            </div>
+          </section>}
 
           {page === 'assistant' && <AgentChat provider={aiProvider} apiKey={aiKey} model={aiModel} onOpenSettings={() => setPage('settings')} />}
 

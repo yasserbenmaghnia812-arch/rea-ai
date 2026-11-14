@@ -52,7 +52,9 @@ private fun ReaApp() {
     var cloudUrl by remember { mutableStateOf("https://rea-cloud-mcp-unified.onrender.com") }
     var replicaUrl by remember { mutableStateOf("https://replica-mcp-server-dfj0.onrender.com") }
     var eccUrl by remember { mutableStateOf("https://yasser-ecc-mcp-m8ia.onrender.com") }
-    var bearer by remember { mutableStateOf("") }
+    var cloudBearer by remember { mutableStateOf("") }
+    var replicaBearer by remember { mutableStateOf("") }
+    var eccBearer by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("لم يتم اختبار اتصال MCP بعد") }
     var mcpTestOutput by remember { mutableStateOf("لم يتم تنفيذ اختبار أداة MCP بعد") }
     var selectedServer by remember { mutableStateOf("REA Cloud MCP") }
@@ -99,6 +101,11 @@ private fun ReaApp() {
         McpServer("ECC MCP", eccUrl)
     )
     val activeUrl = servers.first { it.title == selectedServer }.url
+    val activeBearer = when (selectedServer) {
+        "Replica MCP" -> replicaBearer
+        "ECC MCP" -> eccBearer
+        else -> cloudBearer
+    }
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Ink, surface = Panel)) {
         Scaffold(containerColor = Ink, bottomBar = {
@@ -279,7 +286,7 @@ private fun ReaApp() {
                                     scope.launch {
                                         try {
                                             val result = withContext(Dispatchers.IO) {
-                                                McpClient().connect(activeUrl, bearer)
+                                                McpClient().connect(activeUrl, activeBearer)
                                             }
                                             status = if (result.testToolName.isNotBlank()) "نجح handshake و tools/list و tools/call" else "نجح handshake و tools/list فقط"
                                             serverInfo = "${result.serverName} • protocol ${result.protocolVersion} • session ${if(result.sessionCreated) "موجودة" else "stateless"}"
@@ -369,14 +376,30 @@ private fun ReaApp() {
                         OutlinedTextField(value = replicaUrl, onValueChange = { replicaUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Replica MCP URL") }, singleLine = true)
                         OutlinedTextField(value = eccUrl, onValueChange = { eccUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text("ECC MCP URL") }, singleLine = true)
                         OutlinedTextField(
-                            value = bearer,
-                            onValueChange = { bearer = it },
+                            value = cloudBearer,
+                            onValueChange = { cloudBearer = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Bearer token (اختياري، ذاكرة مؤقتة فقط)") },
+                            label = { Text("REA Cloud Bearer token") },
                             visualTransformation = PasswordVisualTransformation(),
                             singleLine = true
                         )
-                        Text("لا يُحفظ الرمز في الملفات أو التخزين الدائم. أدخله فقط إذا كان الخادم يتطلبه.", color = Color(0xFFFFC66D), fontSize = 12.sp)
+                        OutlinedTextField(
+                            value = replicaBearer,
+                            onValueChange = { replicaBearer = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Replica Bearer token") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = eccBearer,
+                            onValueChange = { eccBearer = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("ECC Bearer token") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true
+                        )
+                        Text("لكل خادم رمز مستقل. تبقى الرموز في ذاكرة التطبيق فقط ولا تُحفظ في الملفات أو التخزين الدائم.", color = Color(0xFFFFC66D), fontSize = 12.sp)
                         StatusCard("النموذج المحلي", "Qwen2.5-0.5B-Instruct Q4_0 • GGUF • تنزيل أول مرة نحو 429 MB")
                         Button(onClick = { selected = "الرئيسية" }, modifier = Modifier.fillMaxWidth()) {
                             Text("إعداد النموذج المحلي")

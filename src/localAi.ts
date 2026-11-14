@@ -6,6 +6,7 @@ type PipelineFactory = (task: string, model: string, options: Record<string, unk
 
 const DEFAULT_MODEL = "onnx-community/Qwen2.5-0.5B-Instruct"
 let generatorPromise: Promise<TextGenerator> | null = null
+let loadedModelId = ''
 let activeProgress: ((message: string) => void) | undefined
 
 function progressLabel(event: Record<string, unknown>): string {
@@ -38,7 +39,8 @@ export async function requestLocalReply(
   if (!modelId.trim()) throw new Error("أدخل معرّف النموذج المحلي.")
   activeProgress = onProgress
   const useWebGpu = typeof navigator !== "undefined" && "gpu" in navigator
-  if (!generatorPromise) {
+  if (!generatorPromise || loadedModelId !== modelId) {
+    loadedModelId = modelId
     generatorPromise = createGenerator(modelId, useWebGpu).catch(async (error) => {
       if (!useWebGpu) throw error
       activeProgress?.("تعذر تشغيل WebGPU؛ تجري محاولة استخدام المعالج (WASM).")
@@ -61,6 +63,7 @@ export async function requestLocalReply(
     return text.trim()
   } catch (error) {
     generatorPromise = null
+    loadedModelId = ''
     const message = error instanceof Error ? error.message : String(error)
     throw new Error("تعذر تشغيل النموذج المحلي: " + message)
   } finally {

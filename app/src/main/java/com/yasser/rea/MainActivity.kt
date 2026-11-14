@@ -196,8 +196,14 @@ private fun ReaApp() {
                             }
                         }
                         Text(
-                            if (localReady) "المحادثة تعمل محلياً على الجهاز." else "حمّل النموذج من الصفحة الرئيسية قبل بدء المحادثة.",
-                            color = if (localReady) Accent else Color(0xFFFFC66D),
+                            if (chatMode == "محلي") {
+                                if (localReady) "المحادثة تعمل محلياً على الجهاز." else "حمّل النموذج من الصفحة الرئيسية قبل بدء المحادثة."
+                            } else {
+                                "المحادثة عبر $aiProvider؛ أدخل مفتاح API واسم النموذج من الإعدادات."
+                            },
+                            color = if ((chatMode == "محلي" && localReady) ||
+                                (chatMode == "مزود خارجي" && apiKey.isNotBlank() && aiModel.isNotBlank())
+                            ) Accent else Color(0xFFFFC66D),
                             fontSize = 12.sp
                         )
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

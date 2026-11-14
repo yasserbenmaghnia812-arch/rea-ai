@@ -26,8 +26,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
       - name: Install Android platform, NDK and CMake
         run: sdkmanager "platforms;android-35" "ndk;29.0.13113456" "cmake;3.31.6"
       - name: Set up Gradle

@@ -62,6 +62,13 @@ private fun ReaApp() {
     var localReady by remember { mutableStateOf(false) }
     var modelBusy by remember { mutableStateOf(false) }
     var localStatus by remember { mutableStateOf("النموذج المحلي لم يتم تحميله بعد") }
+    var chatMode by remember { mutableStateOf("محلي") }
+    var aiProvider by remember { mutableStateOf("Gemini") }
+    var aiModel by remember { mutableStateOf("") }
+    var apiKey by remember { mutableStateOf("") }
+    var providerBusy by remember { mutableStateOf(false) }
+    var providerStatus by remember { mutableStateOf("لم يتم اختبار مزود الذكاء الاصطناعي بعد") }
+    val remoteHistory = remember { mutableStateListOf<ReaChatTurn>() }
     val messages = remember {
         mutableStateListOf("واجهة REA الأصلية جاهزة. حمّل النموذج المحلي لتفعيل المحادثة دون اتصال.")
     }
@@ -174,6 +181,10 @@ private fun ReaApp() {
                         }
                     }
                     "المحادثة" -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = chatMode == "محلي", onClick = { chatMode = "محلي" }, label = { Text("النموذج المحلي") })
+                            FilterChip(selected = chatMode == "مزود خارجي", onClick = { chatMode = "مزود خارجي" }, label = { Text(aiProvider) })
+                        }
                         LazyColumn(
                             Modifier.weight(1f).fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -201,7 +212,10 @@ private fun ReaApp() {
                                 }
                             )
                             Button(
-                                enabled = localReady && prompt.isNotBlank(),
+                                enabled = prompt.isNotBlank() && (
+                                    chatMode == "محلي" && localReady ||
+                                    chatMode == "مزود خارجي" && apiKey.isNotBlank() && aiModel.isNotBlank() && !providerBusy
+                                ),
                                 onClick = {
                                     val userPrompt = prompt.trim()
                                     prompt = ""
@@ -210,9 +224,18 @@ private fun ReaApp() {
                                     val answerIndex = messages.lastIndex
                                     scope.launch {
                                         try {
-                                            localEngine?.sendUserPrompt(userPrompt, 128)?.collect { token ->
-                                                messages[answerIndex] = messages[answerIndex] + token
-                                            } ?: error("محرك النموذج غير متاح.")
+                                            if (chatMode == "محلي") {
+                                                localEngine?.sendUserPrompt(userPrompt, 128)?.collect { token ->
+                                                    messages[answerIndex] = messages[answerIndex] + token
+                                                } ?: error("محرك النموذج غير متاح.")
+                                            } else {
+                                                remoteHistory.add(ReaChatTurn("user", userPrompt))
+                                                val answer = AiProviderClient.generate(
+                                                    aiProvider, apiKey, aiModel, remoteHistory.toList()
+                                                )
+                                                remoteHistory.add(ReaChatTurn("assistant", answer))
+                                                messages[answerIndex] = "REA ($aiProvider): $answer"
+                                            }
                                         } catch (e: Exception) {
                                             messages[answerIndex] = "تعذر توليد الرد: ${e.message ?: "خطأ غير معروف"}"
                                         }
@@ -278,6 +301,58 @@ private fun ReaApp() {
                         Text("هذه المرحلة تكتشف الأدوات فقط؛ لا تنفذها تلقائياً.", color = Color(0xFFFFC66D), fontSize = 12.sp)
                     }
                     else -> {
+                        Text("مزود الذكاء الاصطناعي", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("Gemini", "Groq", "OpenRouter").forEach { provider ->
+                                FilterChip(selected = aiProvider == provider, onClick = {
+                                    aiProvider = provider
+                                    providerStatus = "لم يتم اختبار $provider بعد"
+                                }, label = { Text(provider) })
+                            }
+                        }
+                        OutlinedTextField(
+                            value = aiModel,
+                            onValueChange = { aiModel = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("اسم النموذج لدى $aiProvider") },
+                            placeholder = { Text("أدخل Model ID من لوحة المزود") },
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = apiKey,
+                            onValueChange = { apiKey = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("مفتاح API — لا يُحفظ") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true
+                        )
+                        Button(
+                            enabled = !providerBusy && apiKey.isNotBlank() && aiModel.isNotBlank(),
+                            onClick = {
+                                providerBusy = true
+                                providerStatus = "جارٍ اختبار $aiProvider..."
+                                scope.launch {
+                                    try {
+                                        val answer = AiProviderClient.generate(
+                                            aiProvider, apiKey, aiModel,
+                                            listOf(ReaChatTurn("user", "Reply with exactly REA_PROVIDER_OK"))
+                                        )
+                                        providerStatus = "نجح الاختبار؛ رد المزود: $answer"
+                                    } catch (e: Exception) {
+                                        providerStatus = "فشل الاختبار: ${e.message ?: "خطأ غير معروف"}"
+                                    } finally {
+                                        providerBusy = false
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (providerBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Text("اختبار اتصال مزود AI")
+                        }
+                        StatusCard("نتيجة اختبار المزود", providerStatus)
+                        Text("المفتاح يبقى في ذاكرة التطبيق فقط ويُرسل مباشرة إلى المزود عبر HTTPS؛ لا يُحفظ في ملفات REA.", color = Color(0xFFFFC66D), fontSize = 12.sp)
+                        Divider(color = Color.DarkGray)
                         Text("إعداد خوادم MCP", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                         OutlinedTextField(value = cloudUrl, onValueChange = { cloudUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text("REA Cloud MCP URL") }, singleLine = true)
                         OutlinedTextField(value = replicaUrl, onValueChange = { replicaUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Replica MCP URL") }, singleLine = true)

@@ -10,7 +10,7 @@
     },
     {
       "source": "/api/ecc",
-      "destination": "https://yasser-ecc-mcp.onrender.com/mcp"
+      "destination": "https://yasser-ecc-mcp-m8ia.onrender.com/mcp"
     }
   ]
 }

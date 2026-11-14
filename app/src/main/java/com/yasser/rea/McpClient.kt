@@ -133,12 +133,14 @@ class McpClient {
             }
             val nextSession = response.header("MCP-Session-Id") ?: sessionId
             if (responseText.isBlank() && allowEmpty) return JSONObject() to nextSession
-            val jsonText = if (responseText.trimStart().startsWith("data:")) {
-                responseText.lineSequence()
-                    .filter { it.startsWith("data:") }
-                    .map { it.removePrefix("data:").trim() }
-                    .firstOrNull { it.isNotBlank() && it != "[DONE]" }.orEmpty()
-            } else responseText
+            // Streamable HTTP may return JSON directly or an SSE "event: message" frame.
+            val dataLines = responseText.lineSequence()
+                .map { it.trim() }
+                .filter { it.startsWith("data:") }
+                .map { it.removePrefix("data:").trim() }
+                .filter { it.isNotBlank() && it != "[DONE]" }
+                .toList()
+            val jsonText = if (dataLines.isNotEmpty()) dataLines.first() else responseText.trim()
             if (jsonText.isBlank() && allowEmpty) return JSONObject() to nextSession
             val json = try { JSONObject(jsonText) } catch (e: Exception) {
                 throw IllegalStateException("استجابة MCP غير مفهومة: ${responseText.take(250)}")

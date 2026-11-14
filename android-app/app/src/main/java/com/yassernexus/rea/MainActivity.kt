@@ -7,10 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Send
@@ -18,14 +15,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.yassernexus.rea.data.LocalModelEngine
+import com.yassernexus.rea.data.LocalModelManager
 import com.yassernexus.rea.data.McpClient
 import com.yassernexus.rea.data.McpTool
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -48,6 +49,8 @@ private data class ChatLine(val text: String, val fromUser: Boolean)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun REAConsoleApp() {
+    val context = LocalContext.current
+    val localEngine = remember { LocalModelEngine(context) }
     val servers = remember {
         mutableStateListOf(
             ServerConfig("REA", "وكيل تنفيذ وتحليل المهام"),
@@ -55,7 +58,7 @@ private fun REAConsoleApp() {
             ServerConfig("ECC", "قواعد ومهارات البرمجة")
         )
     }
-    val messages = remember { mutableStateListOf(ChatLine("مرحباً. هذه نسخة Android أصلية قيد البناء. اربط خادم MCP من الإعدادات ثم افحص أدواته.", false)) }
+    val messages = remember { mutableStateListOf(ChatLine("مرحباً. هذه نسخة Android أصلية. حمّل النموذج المحلي اختيارياً، أو اربط خادم MCP من الإعدادات.", false)) }
     var prompt by remember { mutableStateOf("") }
     var selectedServer by remember { mutableIntStateOf(0) }
     var showSettings by remember { mutableStateOf(false) }
@@ -66,8 +69,17 @@ private fun REAConsoleApp() {
     var status by remember { mutableStateOf("غير متصل") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var modelDownloaded by remember { mutableStateOf(LocalModelManager.isDownloaded(context)) }
+    var modelLoaded by remember { mutableStateOf(false) }
+    var modelBusy by remember { mutableStateOf(false) }
+    var modelProgress by remember { mutableIntStateOf(0) }
+    var modelStatus by remember { mutableStateOf(if (modelDownloaded) "النموذج موجود على الهاتف — لم يتم تحميله في الذاكرة" else "لم يتم تنزيل النموذج") }
     val scope = rememberCoroutineScope()
     val client = remember { McpClient() }
+
+    DisposableEffect(localEngine) {
+        onDispose { localEngine.close() }
+    }
 
     Scaffold(
         topBar = {
@@ -102,6 +114,65 @@ private fun REAConsoleApp() {
                 }
             }
 
+            Card {
+                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("الذكاء الاصطناعي المحلي", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.weight(1f))
+                        Text(if (modelLoaded) "جاهز" else if (modelDownloaded) "مُنَزّل" else "اختياري", style = MaterialTheme.typography.labelMedium)
+                    }
+                    Text("Qwen2.5-0.5B-Instruct • GGUF Q4_K_M • ${LocalModelManager.MODEL_SIZE_LABEL}")
+                    Text(modelStatus, style = MaterialTheme.typography.bodySmall)
+                    if (modelBusy && modelProgress > 0) {
+                        LinearProgressIndicator(progress = { modelProgress / 100f }, modifier = Modifier.fillMaxWidth())
+                        Text("$modelProgress%", style = MaterialTheme.typography.labelSmall)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!modelDownloaded) {
+                            Button(enabled = !modelBusy, onClick = {
+                                scope.launch {
+                                    modelBusy = true
+                                    modelProgress = 0
+                                    modelStatus = "جارٍ تنزيل النموذج — قد يستغرق وقتاً حسب سرعة الإنترنت"
+                                    runCatching {
+                                        LocalModelManager.download(context) { value ->
+                                            withContext(Dispatchers.Main) { modelProgress = value }
+                                        }
+                                    }.onSuccess {
+                                        modelDownloaded = true
+                                        modelStatus = "اكتمل التنزيل. اضغط تحميل لتشغيل النموذج."
+                                    }.onFailure {
+                                        modelStatus = it.message ?: "فشل تنزيل النموذج"
+                                    }
+                                    modelBusy = false
+                                }
+                            }) { Text(if (modelBusy) "جارٍ التنزيل…" else "تنزيل النموذج") }
+                        } else if (!modelLoaded) {
+                            Button(enabled = !modelBusy, onClick = {
+                                scope.launch {
+                                    modelBusy = true
+                                    modelStatus = "جارٍ تحميل النموذج في الذاكرة…"
+                                    runCatching { localEngine.load(LocalModelManager.modelFile(context)) }
+                                        .onSuccess {
+                                            modelLoaded = true
+                                            modelStatus = "النموذج يعمل محلياً. يمكن استخدام المحادثة دون API."
+                                        }
+                                        .onFailure { modelStatus = it.message ?: "تعذر تحميل النموذج" }
+                                    modelBusy = false
+                                }
+                            }) { Text(if (modelBusy) "جارٍ التحميل…" else "تحميل النموذج") }
+                        } else {
+                            OutlinedButton(onClick = {
+                                localEngine.close()
+                                modelLoaded = false
+                                modelStatus = "تم إيقاف النموذج وتحرير موارده."
+                            }) { Text("إيقاف النموذج") }
+                        }
+                    }
+                    Text("التنزيل اختياري ولا يبدأ إلا عند الضغط. حجم الملف نحو نصف غيغابايت؛ يلزم اتصال إنترنت ومساحة تخزين كافية.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
             Text("الخوادم", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 servers.forEachIndexed { index, server ->
@@ -130,7 +201,7 @@ private fun REAConsoleApp() {
                     Spacer(Modifier.height(8.dp))
                     Text("REA • Replica • ECC", style = MaterialTheme.typography.titleLarge)
                     Text("أضف عناوين خوادم MCP ثم افحص الأدوات.")
-                    Text("محرك الذكاء الاصطناعي المحلي سيُدمج في مرحلة مستقلة.", style = MaterialTheme.typography.bodySmall)
+                    Text("استدعاء الأدوات يتطلب موافقتك في كل مرة.", style = MaterialTheme.typography.bodySmall)
                 }
             }
 
@@ -147,11 +218,27 @@ private fun REAConsoleApp() {
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(value = prompt, onValueChange = { prompt = it }, modifier = Modifier.weight(1f), placeholder = { Text("اكتب طلبك…") }, maxLines = 3)
-                IconButton(onClick = {
+                IconButton(enabled = !modelBusy, onClick = {
                     if (prompt.isNotBlank()) {
-                        messages.add(ChatLine(prompt.trim(), true))
-                        messages.add(ChatLine("واجهة المحادثة جاهزة؛ ربط نموذج الذكاء المحلي لم يُفعّل بعد.", false))
+                        val userPrompt = prompt.trim()
+                        messages.add(ChatLine(userPrompt, true))
                         prompt = ""
+                        if (!modelLoaded) {
+                            messages.add(ChatLine("نزّل النموذج المحلي وحمّله أولاً لتفعيل المحادثة دون API.", false))
+                        } else {
+                            messages.add(ChatLine("", false))
+                            val answerIndex = messages.lastIndex
+                            scope.launch {
+                                runCatching {
+                                    localEngine.generate(userPrompt, maxTokens = 128).collect { token ->
+                                        val updated = messages[answerIndex].text + token
+                                        messages[answerIndex] = ChatLine(updated, false)
+                                    }
+                                }.onFailure {
+                                    messages[answerIndex] = ChatLine("خطأ في التوليد: ${it.message ?: "غير معروف"}", false)
+                                }
+                            }
+                        }
                     }
                 }) { Icon(Icons.Default.Send, contentDescription = "إرسال") }
             }
